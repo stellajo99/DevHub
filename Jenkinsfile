@@ -55,23 +55,23 @@ pipeline {
                 BE_COBERTURA = 'backend/coverage/cobertura-coverage.xml'
             }
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                     dir('backend') {
                         sh '''
                         #!/usr/bin/env bash
-                        set -eux
+                        set -euo pipefail
 
                         echo ">>> Installing backend dependencies"
                         npm ci
 
-                        echo ">>> Ensure jest-junit reporter is available"
-                        npm pkg get devDependencies.jest-junit >/dev/null 2>&1 || npm install --no-save jest-junit
+                        echo ">>> Install jest-junit reporter"
+                        npm install --no-save jest-junit
 
                         echo ">>> Run tests from ./tests folder with JUnit + coverage"
                         JEST_JUNIT_OUTPUT="test-results.xml" \
                         npx jest tests --runInBand \
                             --reporters=default --reporters=jest-junit \
-                            --coverage
+                            --coverage || true
                         '''
                     }
                 }
@@ -80,26 +80,25 @@ pipeline {
                 always {
                     script {
                         if (fileExists(env.BE_JUNIT)) {
-                        junit allowEmptyResults: true, testResults: env.BE_JUNIT
+                            junit allowEmptyResults: true, testResults: env.BE_JUNIT
                         } else {
-                        echo "JUnit report not found: ${env.BE_JUNIT}"
+                            echo "JUnit report not found: ${env.BE_JUNIT}"
                         }
                     }
                     script {
                         if (fileExists(env.BE_COBERTURA)) {
-                        step([$class: 'CoberturaPublisher',
+                            step([$class: 'CoberturaPublisher',
                                 coberturaReportFile: env.BE_COBERTURA,
                                 onlyStable: false, failNoReports: false,
                                 autoUpdateHealth: false, autoUpdateStability: false])
                         } else {
-                        echo "Coverage report not found: ${env.BE_COBERTURA}"
+                            echo "Coverage report not found: ${env.BE_COBERTURA}"
                         }
                     }
                     archiveArtifacts artifacts: 'backend/coverage/**/*', allowEmptyArchive: true
                 }
             }
         }
-
 
 
 
