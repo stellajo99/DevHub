@@ -650,16 +650,17 @@ EOF
 
     post {
         always {
-            // Clean up workspace but keep important artifacts
-            sh '''
-                echo "Cleaning up temporary files..."
-                rm -f *.tmp || echo "No temp files to clean"
-                rm -f *.log || echo "No log files to clean"
-            '''
+            node {
+                // Clean up workspace but keep important artifacts
+                sh '''
+                    echo "Cleaning up temporary files..."
+                    rm -f *.tmp || echo "No temp files to clean"
+                    rm -f *.log || echo "No log files to clean"
+                '''
 
-            // Archive final build summary
-            script {
-                def buildSummary = """
+                // Archive final build summary
+                script {
+                    def buildSummary = """
 Build Summary for DevHub v${BUILD_NUMBER}
 ==========================================
 Build Timestamp: ${BUILD_TIMESTAMP}
@@ -684,36 +685,37 @@ Artifacts Generated:
 • Security Reports: *-security.json
 • Quality Reports: *-eslint.json
 """
-                writeFile file: 'build-summary.txt', text: buildSummary
-                archiveArtifacts artifacts: 'build-summary.txt', allowEmptyArchive: true
+                    writeFile file: 'build-summary.txt', text: buildSummary
+                    archiveArtifacts artifacts: 'build-summary.txt', allowEmptyArchive: true
+                }
             }
         }
         success {
             echo "🎉 Pipeline completed successfully!"
-            script {
+            node {
                 sh 'echo "✅ DevHub v${BUILD_NUMBER} pipeline completed successfully at $(date)"'
             }
         }
         failure {
             echo "💥 Pipeline failed!"
-            script {
+            node {
                 sh 'echo "❌ DevHub v${BUILD_NUMBER} pipeline failed at $(date)"'
-                emailext (
-                    subject: "🚨 CI/CD Pipeline Failed - DevHub v${BUILD_NUMBER}",
-                    body: """
-                    The CI/CD pipeline for DevHub v${BUILD_NUMBER} has failed.
-
-                    Build Details:
-                    • Build URL: ${BUILD_URL}
-                    • Branch: ${env.BRANCH_NAME}
-                    • Commit: ${env.GIT_COMMIT}
-                    • Failed Stage: Check build logs for details
-
-                    Please investigate the failure and re-run the pipeline once issues are resolved.
-                    """,
-                    to: "${JENKINS_EMAIL}"
-                )
             }
+            emailext (
+                subject: "🚨 CI/CD Pipeline Failed - DevHub v${BUILD_NUMBER}",
+                body: """
+                The CI/CD pipeline for DevHub v${BUILD_NUMBER} has failed.
+
+                Build Details:
+                • Build URL: ${BUILD_URL}
+                • Branch: ${env.BRANCH_NAME}
+                • Commit: ${env.GIT_COMMIT}
+                • Failed Stage: Check build logs for details
+
+                Please investigate the failure and re-run the pipeline once issues are resolved.
+                """,
+                to: "${JENKINS_EMAIL}"
+            )
         }
         unstable {
             echo "⚠️ Pipeline completed with warnings!"
