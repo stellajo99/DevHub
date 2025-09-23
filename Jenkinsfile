@@ -72,23 +72,37 @@ pipeline {
 
         // Stage 4: SECURITY
         stage('Security scan') {
+            environment {
+                SNYK_TOKEN = credentials('SNYK_TOKEN')
+            }
             steps {
                 script {
                     sh '''
                         echo "=== SNYK SECURITY SCAN ==="
                         cd backend
                         
-                        # Install Snyk globally
+                        # Install Snyk CLI
                         npm install -g snyk
                         
-                        # Run Snyk test without authentication (limited features)
+                        # Authenticate with Snyk
+                        snyk auth $SNYK_TOKEN
+                        
+                        # Run vulnerability test
                         echo "Running Snyk security scan..."
                         snyk test --severity-threshold=high || echo "Security vulnerabilities found but continuing..."
                         
-                        # Alternative: Run audit with npm
-                        echo "=== NPM AUDIT ==="
+                        # Optional: Generate JSON report
+                        snyk test --json > snyk-report.json || true
+                        
+                        # Alternative: Run audit with npm as backup
+                        echo "=== NPM AUDIT BACKUP ==="
                         npm audit --audit-level=moderate || true
                     '''
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'backend/snyk-report.json', allowEmptyArchive: true
                 }
             }
         }
