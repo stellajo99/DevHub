@@ -50,51 +50,64 @@ pipeline {
 
         // Stage 2: TEST
         stage('Test') {
-            parallel {
-                stage('Frontend Tests') {
-                    steps {
-                        script {
-                            sh '''
-                                cd frontend
-                                npm run test:coverage || true
-                                npm run test -- --reporters=jest-junit --outputFile=test-results.xml --watchAll=false || true
-                            '''
-                        }
-                    }
-                }
-                stage('Backend Tests') {
-                    steps {
-                        script {
-                            sh '''
-                                cd backend
-                                npm run test:coverage || true
-                                npm run lint || true
-                            '''
-                        }
-                    }
-                }
-                stage('Integration Tests') {
-                    steps {
-                        script {
-                            sh '''
-                                docker compose -f docker-compose.test.yml up -d --build
-                                sleep 20
-                                curl -f http://localhost:3001/api/health || echo "Health check failed"
-                                docker compose -f docker-compose.test.yml down
-                            '''
-                        }
-                    }
-                }
+            environment {
+                BE_JUNIT = 'backend/test-results.xml'
+            }
+            options {
+                timeout(time: 20, unit: 'MINUTES')
+            }
+            steps {
+                sh '''
+                set -euxo pipefail
+
+                echo ">>> 1) Bring up test stack"
+                docker compose -f docker-compose.test.yml up -d --build test-db test-redis test-app
+
+                echo ">>> 2) Wait for API health (host:5001 -> container:5000)"
+                for i in $(seq 1 40); do
+                    if curl -fsS http://localhost:5001/api/health >/dev/null; then
+                    echo "API healthy"; break
+                    fi
+                    sleep 3
+                done
+
+                echo ">>> 3) Run tests and export results"
+                docker compose -f docker-compose.test.yml exec -T test-app bash -lc '
+                    set -euxo pipefail
+                    cd /app/backend
+                    npm ci
+                    # Ensure junit reporter is available inside the container (ephemeral install)
+                    npm pkg get devDependencies.jest-junit >/dev/null 2>&1 || npm i -D jest-junit
+                    # Export JUnit XML and generate coverage
+                    JEST_JUNIT_OUTPUT="/app/backend/test-results.xml" \\
+                    npx jest backend/tests --runInBand \\
+                    --reporters=default --reporters=jest-junit \\
+                    --coverage
+                '
+                '''
             }
             post {
                 always {
-                    junit '**/test-results.xml'
-                    cobertura coberturaReportFile: 'frontend/coverage/cobertura-coverage.xml', autoUpdateHealth: false, autoUpdateStability: false, failNoReports: false
-                    cobertura coberturaReportFile: 'backend/coverage/cobertura-coverage.xml', autoUpdateHealth: false, autoUpdateStability: false, failNoReports: false
-                    archiveArtifacts artifacts: '**/coverage/**/*', allowEmptyArchive: true
+                // Publish JUnit test results\
+                junit allowEmptyResults: false, testResults: "${BE_JUNIT}"
+
+                // Publish coverage if Cobertura file exists (won't fail if missing)
+                script {
+                    if (fileExists('backend/coverage/cobertura-coverage.xml')) {
+                    step([$class: 'CoberturaPublisher',
+                            coberturaReportFile: 'backend/coverage/cobertura-coverage.xml',
+                            onlyStable: false, failNoReports: false,
+                            autoUpdateHealth: false, autoUpdateStability: false])
+                    }
+                }
+
+                // Tear down stack and archive coverage artifacts
+                sh 'docker compose -f docker-compose.test.yml down -v || true'
+                archiveArtifacts artifacts: 'backend/coverage/**/*', allowEmptyArchive: true
                 }
             }
         }
+
 
         // Stage 3: CODE QUALITY
         stage('Code Quality') {
