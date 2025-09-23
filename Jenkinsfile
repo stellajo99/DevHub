@@ -6,7 +6,7 @@ pipeline {
     environment {
         NODE_VERSION = '18'
         DOCKER_IMAGE = 'devhub'
-        SONAR_PROJECT_KEY = 'devhub'
+        SONAR_PROJECT_KEY = 'stellajo99_DevHub'
         BUILD_TIMESTAMP = "${new Date().format('yyyy-MM-dd-HH-mm-ss')}"
     }
 
@@ -32,7 +32,7 @@ pipeline {
                         echo "Running SonarCloud analysis..."
                         sonar-scanner \
                             -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
-                            -Dsonar.organization=your-organization-name \
+                            -Dsonar.organization=stellajo99 \
                             -Dsonar.sources=src \
                             -Dsonar.host.url=https://sonarcloud.io \
                             -Dsonar.token=${SONAR_TOKEN} \
