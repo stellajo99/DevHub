@@ -86,9 +86,9 @@ pipeline {
         // Stage 5: DEPLOY
         stage('Deploy') {
             steps {
-                parallel {
-                    'Deploy to Staging': {
-                        script {
+                script {
+                    parallel(
+                        'Deploy to Staging': {
                             echo "=== STAGING DEPLOYMENT ==="
                             sh '''
                                 echo "Stopping existing staging services..."
@@ -124,10 +124,8 @@ pipeline {
                                 echo "Running final smoke test..."
                                 curl -f http://localhost:3000/api/health || (echo "Smoke test failed" && exit 1)
                             '''
-                        }
-                    },
-                    'Database Migration': {
-                        script {
+                        },
+                        'Database Migration': {
                             echo "=== DATABASE MIGRATION ==="
                             sh '''
                                 echo "Running database migrations..."
@@ -138,7 +136,7 @@ pipeline {
                                 npm run seed:staging || echo "No seeding required"
                             '''
                         }
-                    }
+                    )
                 }
             }
             post {
