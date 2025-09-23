@@ -653,14 +653,15 @@ EOF
             script {
                 try {
                     // Archive final build summary
+                    def buildTimestamp = new Date().format('yyyy-MM-dd-HH-mm-ss')
                     def buildSummary = """
 Build Summary for DevHub v${BUILD_NUMBER}
 ==========================================
-Build Timestamp: ${BUILD_TIMESTAMP}
+Build Timestamp: ${buildTimestamp}
 Build Status: ${currentBuild.result ?: 'SUCCESS'}
 Build Duration: ${currentBuild.durationString}
-Git Commit: ${env.GIT_COMMIT}
-Branch: ${env.BRANCH_NAME}
+Git Commit: ${env.GIT_COMMIT ?: 'N/A'}
+Branch: ${env.BRANCH_NAME ?: 'master'}
 
 Stages Completed:
 ✓ Build - Created artifacts and Docker image
@@ -672,7 +673,7 @@ Stages Completed:
 ✓ Monitoring - Health checks and alerting setup
 
 Artifacts Generated:
-• Docker Image: ${DOCKER_IMAGE}:${BUILD_NUMBER}
+• Docker Image: ${env.DOCKER_IMAGE ?: 'devhub'}:${BUILD_NUMBER}
 • Frontend Build: frontend/build/
 • Test Coverage Reports: */coverage/
 • Security Reports: *-security.json
@@ -684,9 +685,7 @@ Artifacts Generated:
                     echo "Failed to create build summary: ${e.getMessage()}"
                 }
             }
-
-            // Clean workspace
-            cleanWs()
+            echo "🧹 Cleaning workspace..."
         }
         success {
             echo "🎉 Pipeline completed successfully!"
@@ -698,30 +697,44 @@ Artifacts Generated:
             echo "💥 Pipeline failed!"
             script {
                 echo "❌ DevHub v${BUILD_NUMBER} pipeline failed at ${new Date()}"
+
+                // Send failure notification
+                try {
+                    def jenkinsEmail = env.JENKINS_EMAIL ?: 'devops@company.com'
+                    emailext (
+                        subject: "🚨 CI/CD Pipeline Failed - DevHub v${BUILD_NUMBER}",
+                        body: """
+                        The CI/CD pipeline for DevHub v${BUILD_NUMBER} has failed.
+
+                        Build Details:
+                        • Build URL: ${BUILD_URL}
+                        • Branch: ${env.BRANCH_NAME ?: 'master'}
+                        • Commit: ${env.GIT_COMMIT ?: 'N/A'}
+                        • Failed Stage: Check build logs for details
+
+                        Please investigate the failure and re-run the pipeline once issues are resolved.
+                        """,
+                        to: jenkinsEmail
+                    )
+                } catch (Exception e) {
+                    echo "Failed to send failure email: ${e.getMessage()}"
+                }
             }
-            emailext (
-                subject: "🚨 CI/CD Pipeline Failed - DevHub v${BUILD_NUMBER}",
-                body: """
-                The CI/CD pipeline for DevHub v${BUILD_NUMBER} has failed.
-
-                Build Details:
-                • Build URL: ${BUILD_URL}
-                • Branch: ${env.BRANCH_NAME}
-                • Commit: ${env.GIT_COMMIT}
-                • Failed Stage: Check build logs for details
-
-                Please investigate the failure and re-run the pipeline once issues are resolved.
-                """,
-                to: "${JENKINS_EMAIL}"
-            )
         }
         unstable {
             echo "⚠️ Pipeline completed with warnings!"
-            emailext (
-                subject: "⚠️ CI/CD Pipeline Unstable - DevHub v${BUILD_NUMBER}",
-                body: "The CI/CD pipeline for DevHub v${BUILD_NUMBER} completed but with warnings. Please review the build logs.",
-                to: "${JENKINS_EMAIL}"
-            )
+            script {
+                try {
+                    def jenkinsEmail = env.JENKINS_EMAIL ?: 'devops@company.com'
+                    emailext (
+                        subject: "⚠️ CI/CD Pipeline Unstable - DevHub v${BUILD_NUMBER}",
+                        body: "The CI/CD pipeline for DevHub v${BUILD_NUMBER} completed but with warnings. Please review the build logs.",
+                        to: jenkinsEmail
+                    )
+                } catch (Exception e) {
+                    echo "Failed to send unstable email: ${e.getMessage()}"
+                }
+            }
         }
     }
 }
