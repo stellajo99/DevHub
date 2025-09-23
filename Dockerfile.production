@@ -1,0 +1,93 @@
+# Multi-stage Docker build for DevHub production deployment
+# Stage 1: Build frontend
+FROM node:18-alpine AS frontend-build
+
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm ci --cache /tmp/npm-cache
+
+COPY frontend/ ./
+RUN npm run build
+
+# Stage 2: Build backend
+FROM node:18-alpine AS backend-build
+
+WORKDIR /app/backend
+COPY backend/package*.json ./
+RUN npm ci --only=production --cache /tmp/npm-cache
+
+COPY backend/ ./
+
+# Stage 3: Production runtime
+FROM node:18-alpine AS production
+
+# Add build metadata
+ARG NODE_ENV=production
+ARG APP_VERSION
+ARG BUILD_DATE
+ARG VCS_REF
+
+# Labels for better container management
+LABEL maintainer="DevHub Team <devops@devhub.com>" \
+      version="${APP_VERSION}" \
+      description="DevHub Community Platform - Production" \
+      build-date="${BUILD_DATE}" \
+      vcs-ref="${VCS_REF}" \
+      vcs-url="https://github.com/your-org/devhub" \
+      schema-version="1.0"
+
+# Install system dependencies and create app user
+RUN apk add --no-cache \
+    dumb-init \
+    curl \
+    && addgroup -g 1001 -S nodejs \
+    && adduser -S nodejs -u 1001
+
+# Set up application directories
+WORKDIR /app
+
+# Copy backend application
+COPY --from=backend-build --chown=nodejs:nodejs /app/backend ./backend
+
+# Copy frontend build
+COPY --from=frontend-build --chown=nodejs:nodejs /app/frontend/build ./frontend/build
+
+# Create startup script for backend only
+RUN cat > /app/start.sh << 'EOF'
+#!/bin/sh
+set -e
+
+echo "Starting DevHub Backend..."
+
+# Check if backend package.json exists
+if [ ! -f "/app/backend/package.json" ]; then
+    echo "Error: Backend package.json not found"
+    ls -la /app/backend/
+    exit 1
+fi
+
+# Start backend application
+cd /app/backend
+exec npm start
+EOF
+
+RUN chmod +x /app/start.sh && chown nodejs:nodejs /app/start.sh
+
+# Switch to non-root user
+USER nodejs
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:5000/api/health || exit 1
+
+# Expose backend port only (frontend served separately via nginx)
+EXPOSE 5000
+
+# Set environment variables
+ENV NODE_ENV=production \
+    PORT=5000 \
+    NODE_OPTIONS="--max-old-space-size=1024"
+
+# Use dumb-init to handle signals properly
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["/app/start.sh"]

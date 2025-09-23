@@ -1,0 +1,38 @@
+# Prometheus configuration for DevHub test environment
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+  external_labels:
+    cluster: 'devhub-test'
+    environment: 'test'
+
+# Scrape configuration for test environment
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 60s
+
+  # DevHub Test Application
+  - job_name: 'devhub-test-app'
+    static_configs:
+      - targets: ['test-app:5000']
+    scrape_interval: 30s
+    metrics_path: /api/metrics
+    scrape_timeout: 10s
+    honor_labels: true
+
+  # Test Database metrics (if available)
+  - job_name: 'test-mongodb'
+    static_configs:
+      - targets: ['test-db:27017']
+    scrape_interval: 60s
+    metrics_path: /metrics
+
+  # Test Redis metrics
+  - job_name: 'test-redis'
+    static_configs:
+      - targets: ['test-redis:6379']
+    scrape_interval: 60s
+    metrics_path: /metrics

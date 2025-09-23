@@ -1,0 +1,69 @@
+# Development Docker build for DevHub
+FROM node:18-alpine AS development
+
+# Add build metadata
+ARG NODE_ENV=development
+ARG APP_VERSION
+
+LABEL maintainer="DevHub Team <devops@devhub.com>" \
+      version="${APP_VERSION}" \
+      description="DevHub Community Platform - Development" \
+      environment="development"
+
+# Install system dependencies for development
+RUN apk add --no-cache \
+    dumb-init \
+    curl \
+    git \
+    bash \
+    && addgroup -g 1001 -S nodejs \
+    && adduser -S nodejs -u 1001
+
+# Set up application directories
+WORKDIR /app
+
+# Copy package files first for better caching
+COPY frontend/package*.json ./frontend/
+COPY backend/package*.json ./backend/
+
+# Install all dependencies (including dev dependencies)
+RUN cd frontend && npm install \
+    && cd ../backend && npm install
+
+# Copy application source
+COPY --chown=nodejs:nodejs frontend/ ./frontend/
+COPY --chown=nodejs:nodejs backend/ ./backend/
+
+# Create development startup script for backend only
+RUN cat > /app/start-dev.sh << 'EOF'
+#!/bin/bash
+set -e
+
+echo "Starting DevHub Development Backend..."
+
+# Start backend in development mode
+cd /app/backend
+exec npm run dev
+EOF
+
+RUN chmod +x /app/start-dev.sh && chown nodejs:nodejs /app/start-dev.sh
+
+# Switch to non-root user
+USER nodejs
+
+# Health check for development (backend only)
+HEALTHCHECK --interval=60s --timeout=15s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:5000/api/health || exit 1
+
+# Expose development ports (backend + debug)
+EXPOSE 5000 9229
+
+# Set development environment variables
+ENV NODE_ENV=development \
+    PORT=5000 \
+    REACT_APP_API_URL=http://localhost:5000/api \
+    NODE_OPTIONS="--inspect=0.0.0.0:9229 --max-old-space-size=1024"
+
+# Use dumb-init to handle signals properly
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["/app/start-dev.sh"]

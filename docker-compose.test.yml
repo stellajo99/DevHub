@@ -1,0 +1,138 @@
+# Docker Compose configuration for DevHub test environment
+version: '3.8'
+
+services:
+  # Test Database
+  test-db:
+    image: mongo:6.0
+    container_name: devhub-test-db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: testuser
+      MONGO_INITDB_ROOT_PASSWORD: testpass123
+      MONGO_INITDB_DATABASE: devhub_test
+    ports:
+      - "27018:27017"
+    volumes:
+      - test_db_data:/data/db
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Test Redis for session management
+  test-redis:
+    image: redis:7-alpine
+    container_name: devhub-test-redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - test_redis_data:/data
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # Test Application
+  test-app:
+    build:
+      context: .
+      dockerfile: Dockerfile.development
+      args:
+        NODE_ENV: test
+        APP_VERSION: ${APP_VERSION:-test-latest}
+    container_name: devhub-test-app
+    depends_on:
+      test-db:
+        condition: service_healthy
+      test-redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: test
+      PORT: 5000
+      MONGODB_URI: mongodb://testuser:testpass123@test-db:27017/devhub_test?authSource=admin
+      REDIS_URL: redis://test-redis:6379
+      JWT_SECRET: test-jwt-secret-key-should-be-long-and-secure
+      JWT_EXPIRES_IN: 24h
+      CORS_ORIGIN: http://localhost:3001
+      LOG_LEVEL: info
+      RATE_LIMIT_WINDOW: 900000
+      RATE_LIMIT_MAX: 100
+    ports:
+      - "5001:5000"
+      - "9230:9229" # Debug port
+    volumes:
+      - ./backend:/app/backend
+      - ./frontend:/app/frontend
+      - /app/backend/node_modules
+      - /app/frontend/node_modules
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Test monitoring - Prometheus
+  test-prometheus:
+    image: prom/prometheus:latest
+    container_name: devhub-test-prometheus
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./monitoring/prometheus-test.yml:/etc/prometheus/prometheus.yml:ro
+      - test_prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.enable-lifecycle'
+    networks:
+      - test-network
+    depends_on:
+      - test-app
+
+  # Test monitoring - Grafana
+  test-grafana:
+    image: grafana/grafana:latest
+    container_name: devhub-test-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: testgrafana123
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - test_grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - test-network
+    depends_on:
+      - test-prometheus
+
+networks:
+  test-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  test_db_data:
+    driver: local
+  test_redis_data:
+    driver: local
+  test_prometheus_data:
+    driver: local
+  test_grafana_data:
+    driver: local
