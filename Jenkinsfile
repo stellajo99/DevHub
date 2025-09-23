@@ -41,7 +41,7 @@ pipeline {
                             echo "Checking SonarQube status... ($COUNTER/$MAX_ATTEMPTS)"
                             
                             # Check if SonarQube is responding
-                            if curl -f -s http://localhost:9000/api/system/status | grep -q '"status": "UP"'; then
+                            if curl -f -s http://localhost:9000/api/system/status | grep -q \'"status": "UP"\'; then
                                 echo "✅ SonarQube is ready!"
                                 break
                             fi
