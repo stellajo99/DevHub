@@ -38,7 +38,7 @@ pipeline {
                         
                         while [ $COUNTER -lt $MAX_ATTEMPTS ]; do
                             COUNTER=$((COUNTER + 1))
-                            echo "Checking SonarQube status... ($COUNTER/$MAX_ATTEMPTS)"
+                            echo "Checking SonarQube status... ($COUNTER/$ATTEMPTS)"
                             
                             # Check if SonarQube is responding
                             if curl -f -s http://localhost:9000/api/system/status | grep -q 'UP'; then
