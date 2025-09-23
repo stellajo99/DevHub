@@ -85,10 +85,9 @@ pipeline {
 
         // Stage 5: DEPLOY
         stage('Deploy') {
-
-            parallel {
-                stage('Deploy to Staging') {
-                    steps {
+            steps {
+                parallel {
+                    'Deploy to Staging': {
                         script {
                             echo "=== STAGING DEPLOYMENT ==="
                             sh '''
@@ -102,24 +101,32 @@ pipeline {
                                 sleep 60
 
                                 echo "Running health checks..."
-                                for i in {1..10}; do
+                                COUNTER=0
+                                MAX_ATTEMPTS=10
+                                
+                                while [ $COUNTER -lt $MAX_ATTEMPTS ]; do
+                                    COUNTER=$((COUNTER + 1))
+                                    echo "Health check attempt $COUNTER/$MAX_ATTEMPTS"
+                                    
                                     if curl -f http://localhost:3000/api/health; then
                                         echo "Health check passed"
                                         break
-                                    else
-                                        echo "Attempt $i failed, retrying..."
-                                        sleep 10
                                     fi
+                                    
+                                    if [ $COUNTER -eq $MAX_ATTEMPTS ]; then
+                                        echo "All health checks failed"
+                                        exit 1
+                                    fi
+                                    
+                                    sleep 10
                                 done
 
-                                echo "Running smoke tests..."
+                                echo "Running final smoke test..."
                                 curl -f http://localhost:3000/api/health || (echo "Smoke test failed" && exit 1)
                             '''
                         }
-                    }
-                }
-                stage('Database Migration') {
-                    steps {
+                    },
+                    'Database Migration': {
                         script {
                             echo "=== DATABASE MIGRATION ==="
                             sh '''
@@ -136,14 +143,13 @@ pipeline {
             }
             post {
                 success {
-                    echo "✅ Staging deployment successful"
+                    echo "Staging deployment successful"
                     script {
-                        // Notify team of successful deployment
                         sh 'echo "Deployment to staging completed successfully at $(date)"'
                     }
                 }
                 failure {
-                    echo "❌ Staging deployment failed"
+                    echo "Staging deployment failed"
                     script {
                         sh '''
                             echo "Collecting deployment logs..."
@@ -158,13 +164,19 @@ pipeline {
         // Stage 6: RELEASE
         stage('Release') {
             when {
-                branch 'master'
+                anyOf {
+                    branch 'master'
+                    branch 'origin/master'
+                    environment name: 'GIT_BRANCH', value: 'origin/master'
+                }
             }
             steps {
                 script {
                     echo "=== PRODUCTION RELEASE STAGE ==="
+                    
+                    // Check if Azure CLI is available
+                    sh 'which az || (echo "Azure CLI not installed" && exit 1)'
 
-                    // Azure login and release
                     sh '''
                         echo "Logging into Azure..."
                         az login --service-principal \
@@ -200,14 +212,24 @@ pipeline {
                         sleep 120
 
                         echo "Running production health check..."
-                        for i in {1..10}; do
+                        COUNTER=0
+                        MAX_ATTEMPTS=10
+                        
+                        while [ $COUNTER -lt $MAX_ATTEMPTS ]; do
+                            COUNTER=$((COUNTER + 1))
+                            echo "Health check attempt $COUNTER/$MAX_ATTEMPTS"
+                            
                             if curl -f https://devhub-app-staging.azurewebsites.net/api/health; then
                                 echo "Production health check passed"
                                 break
-                            else
-                                echo "Health check attempt $i failed, retrying..."
-                                sleep 15
                             fi
+                            
+                            if [ $COUNTER -eq $MAX_ATTEMPTS ]; then
+                                echo "Production health checks failed"
+                                exit 1
+                            fi
+                            
+                            sleep 15
                         done
 
                         echo "Swapping staging to production..."
@@ -231,15 +253,15 @@ pipeline {
             }
             post {
                 success {
-                    echo "🚀 Production release successful!"
+                    echo "Production release successful"
                     emailext (
-                        subject: "✅ Production Release v${BUILD_NUMBER} Deployed Successfully",
+                        subject: "Production Release v${BUILD_NUMBER} Deployed Successfully",
                         body: """
                         Production release v${BUILD_NUMBER} has been deployed successfully.
 
-                        🔗 Application URL: https://devhub-app.azurewebsites.net
-                        📊 Build Details: ${BUILD_URL}
-                        🕐 Deployed at: ${BUILD_TIMESTAMP}
+                        Application URL: https://devhub-app.azurewebsites.net
+                        Build Details: ${BUILD_URL}
+                        Deployed at: ${BUILD_TIMESTAMP}
 
                         Please verify the deployment and monitor for any issues.
                         """,
@@ -247,7 +269,7 @@ pipeline {
                     )
                 }
                 failure {
-                    echo "❌ Production release failed!"
+                    echo "Production release failed"
                     sh '''
                         echo "Rolling back production deployment..."
                         az webapp deployment slot swap \
@@ -257,7 +279,7 @@ pipeline {
                             --target-slot staging || echo "Rollback failed"
                     '''
                     emailext (
-                        subject: "🚨 URGENT: Production Release v${BUILD_NUMBER} Failed",
+                        subject: "URGENT: Production Release v${BUILD_NUMBER} Failed",
                         body: "Production release v${BUILD_NUMBER} failed. Automatic rollback attempted. Please investigate immediately.",
                         to: "${JENKINS_EMAIL}"
                     )
