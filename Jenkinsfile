@@ -55,7 +55,7 @@ pipeline {
                 BE_COBERTURA = 'backend/coverage/cobertura-coverage.xml'
             }
             options {
-                timeout(time: 20, unit: 'MINUTES')
+                timeout(time: 10, unit: 'MINUTES')
             }
             steps {
                 sh '''#!/usr/bin/env bash
@@ -66,10 +66,10 @@ pipeline {
 
             echo ">>> 2) Wait for API health (host:5001 -> container:5000)"
             for i in {1..40}; do
-            if curl -fsS http://localhost:5001/api/health >/dev/null; then
+            if docker compose -f docker-compose.test.yml exec -T test-app sh -lc "curl -fsS http://localhost:5000/api/health >/dev/null"; then
                 echo "API healthy"; break
             fi
-            sleep 3
+            echo "Waiting for API... ($i/40)"; sleep 3
             done
 
             echo ">>> 3) Run tests and export results"
@@ -91,6 +91,7 @@ pipeline {
                 always {
                 // publish JUnit (don’t fail the whole pipeline if empty)
                 script {
+                    echo "=== TEST STAGE ==="
                     if (fileExists(env.BE_JUNIT)) {
                     junit allowEmptyResults: false, testResults: env.BE_JUNIT
                     } else {
