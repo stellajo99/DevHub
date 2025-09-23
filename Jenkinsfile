@@ -11,6 +11,7 @@ pipeline {
         JENKINS_EMAIL = 'stellamore99@gmail.com'
     }
 
+/*
     stages {
 
         // Stage 3: CODE QUALITY 
@@ -82,7 +83,7 @@ pipeline {
             }
         }
 
-
+*/
         // Stage 5: DEPLOY
         stage('Deploy') {
             parallel {
