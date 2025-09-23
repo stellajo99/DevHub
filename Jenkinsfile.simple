@@ -1,0 +1,34 @@
+pipeline {
+    agent any
+
+    stages {
+        stage('Build') {
+            steps {
+                sh '''
+                    npm install
+                    npm run build
+                '''
+            }
+        }
+
+        stage('Test') {
+            steps {
+                sh 'npm test'
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                sh 'echo "Deploying..."'
+            }
+        }
+    }
+
+    post {
+        failure {
+            mail to: 'your-email@example.com',
+                 subject: "Build Failed: ${env.JOB_NAME}",
+                 body: "Build failed. Check Jenkins for details."
+        }
+    }
+}

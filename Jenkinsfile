@@ -1,5 +1,10 @@
 pipeline {
-    agent any
+    agent {
+        docker {
+            image 'node:18-alpine'
+            args '-v /var/run/docker.sock:/var/run/docker.sock --user root'
+        }
+    }
 
     environment {
         NODE_VERSION = '18'
@@ -20,8 +25,11 @@ pipeline {
                 script {
                     echo "=== BUILD STAGE ==="
 
-                    // Install dependencies and build
+                    // Install Docker in Alpine and build
                     sh '''
+                        echo "Installing Docker in Alpine container..."
+                        apk add --no-cache docker
+
                         echo "Installing root dependencies..."
                         npm install
 
@@ -86,6 +94,9 @@ pipeline {
                         script {
                             echo "=== INTEGRATION TEST STAGE ==="
                             sh '''
+                                echo "Installing docker-compose and curl..."
+                                apk add --no-cache docker-compose curl
+
                                 echo "Running integration tests..."
                                 docker-compose -f docker-compose.test.yml up -d --build
                                 sleep 30
@@ -119,9 +130,19 @@ pipeline {
                         script {
                             echo "=== SONARQUBE ANALYSIS ==="
 
+                            // Install SonarQube scanner
+                            sh '''
+                                echo "Installing SonarQube scanner..."
+                                apk add --no-cache openjdk11-jre wget unzip
+                                wget https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-4.8.0.2856-linux.zip
+                                unzip sonar-scanner-cli-4.8.0.2856-linux.zip
+                                export PATH=$PATH:$(pwd)/sonar-scanner-4.8.0.2856-linux/bin
+                            '''
+
                             // SonarQube analysis
                             withSonarQubeEnv('SonarQube') {
                                 sh '''
+                                    export PATH=$PATH:$(pwd)/sonar-scanner-4.8.0.2856-linux/bin
                                     sonar-scanner \\
                                         -Dsonar.projectKey=${SONAR_PROJECT_KEY} \\
                                         -Dsonar.sources=. \\
@@ -183,6 +204,9 @@ pipeline {
                         script {
                             echo "=== DEPENDENCY SECURITY SCAN ==="
                             sh '''
+                                echo "Installing security tools..."
+                                npm install -g snyk
+
                                 echo "Running Snyk security scan on frontend..."
                                 cd frontend
                                 snyk test --json --severity-threshold=medium > ../frontend-security.json || echo "Frontend security scan completed with issues"
@@ -398,8 +422,12 @@ pipeline {
                 script {
                     echo "=== PRODUCTION RELEASE STAGE ==="
 
-                    // Azure login and release
+                    // Install Azure CLI and login
                     sh '''
+                        echo "Installing Azure CLI..."
+                        apk add --no-cache python3 py3-pip
+                        pip3 install azure-cli
+
                         echo "Logging into Azure..."
                         az login --service-principal \
                             --username ${AZURE_CLIENT_ID} \
