@@ -2,6 +2,7 @@
 const Post = require('../models/Post');
 const User = require('../models/User');
 const Joi = require('joi');
+const mongoose = require('mongoose');
 
 const getPosts = async (req, res) => {
   try {
@@ -41,7 +42,14 @@ const getPosts = async (req, res) => {
 
 const getPost = async (req, res) => {
   try {
-    const post = await Post.findById(req.params.id)
+    const { id } = req.params;
+
+    // Check if the ID is a valid MongoDB ObjectId format (24 hex characters)
+    if (!mongoose.Types.ObjectId.isValid(id) || id.length !== 24) {
+      return res.status(400).json({ message: 'Invalid post ID format' });
+    }
+
+    const post = await Post.findById(id)
       .populate('author', 'nickname');
 
     if (!post) {

@@ -7,7 +7,7 @@
     "server": "cd backend && npm run dev",
     "client": "cd frontend && npm start",
     "build": "cd frontend && npm run build",
-    "test": "concurrently \"cd backend && npm test\" \"cd frontend && npm test -- --watchAll=false\"",
+    "test": "cd backend && npm test",
     "install-deps": "npm install && cd backend && npm install && cd ../frontend && npm install"
   },
   "devDependencies": {
