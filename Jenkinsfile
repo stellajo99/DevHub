@@ -21,7 +21,7 @@ pipeline {
                     echo "=== BUILD STAGE ==="
 
                     // Install dependencies and build
-                    bat '''
+                    sh '''
                         echo "Installing root dependencies..."
                         npm install
 
@@ -31,14 +31,14 @@ pipeline {
                         npm run build
 
                         echo "Building backend..."
-                        cd ..\\backend
+                        cd ../backend
                         npm install
                         npm run build
 
                         echo "Building Docker image..."
                         cd ..
-                        docker build -f Dockerfile.production -t %DOCKER_IMAGE%:%BUILD_NUMBER% .
-                        docker tag %DOCKER_IMAGE%:%BUILD_NUMBER% %DOCKER_IMAGE%:latest
+                        docker build -f Dockerfile.production -t ${DOCKER_IMAGE}:${BUILD_NUMBER} .
+                        docker tag ${DOCKER_IMAGE}:${BUILD_NUMBER} ${DOCKER_IMAGE}:latest
                     '''
                 }
             }
@@ -58,7 +58,7 @@ pipeline {
                     steps {
                         script {
                             echo "=== FRONTEND TEST STAGE ==="
-                            bat '''
+                            sh '''
                                 echo "Running frontend tests with coverage..."
                                 cd frontend
                                 npm run test:coverage
@@ -71,7 +71,7 @@ pipeline {
                     steps {
                         script {
                             echo "=== BACKEND TEST STAGE ==="
-                            bat '''
+                            sh '''
                                 echo "Running backend tests with coverage..."
                                 cd backend
                                 npm run test:coverage
@@ -84,10 +84,10 @@ pipeline {
                     steps {
                         script {
                             echo "=== INTEGRATION TEST STAGE ==="
-                            bat '''
+                            sh '''
                                 echo "Running integration tests..."
                                 docker-compose -f docker-compose.test.yml up -d --build
-                                timeout /t 30
+                                sleep 30
                                 curl -f http://localhost:3001/api/health || echo "Health check failed"
                                 docker-compose -f docker-compose.test.yml down
                             '''
@@ -120,13 +120,13 @@ pipeline {
 
                             // SonarQube analysis
                             withSonarQubeEnv('SonarQube') {
-                                bat '''
-                                    sonar-scanner ^
-                                        -Dsonar.projectKey=%SONAR_PROJECT_KEY% ^
-                                        -Dsonar.sources=. ^
-                                        -Dsonar.exclusions=node_modules/**,coverage/**,build/**,dist/**,*.log ^
-                                        -Dsonar.javascript.lcov.reportPaths=frontend/coverage/lcov.info,backend/coverage/lcov.info ^
-                                        -Dsonar.typescript.lcov.reportPaths=frontend/coverage/lcov.info ^
+                                sh '''
+                                    sonar-scanner \\
+                                        -Dsonar.projectKey=${SONAR_PROJECT_KEY} \\
+                                        -Dsonar.sources=. \\
+                                        -Dsonar.exclusions=node_modules/**,coverage/**,build/**,dist/**,*.log \\
+                                        -Dsonar.javascript.lcov.reportPaths=frontend/coverage/lcov.info,backend/coverage/lcov.info \\
+                                        -Dsonar.typescript.lcov.reportPaths=frontend/coverage/lcov.info \\
                                         -Dsonar.testExecutionReportPaths=**/test-results.xml
                                 '''
                             }
@@ -145,13 +145,13 @@ pipeline {
                     steps {
                         script {
                             echo "=== CODE COMPLEXITY ANALYSIS ==="
-                            bat '''
+                            sh '''
                                 echo "Running ESLint on frontend..."
                                 cd frontend
                                 npx eslint src --ext .js,.jsx,.ts,.tsx --format json --output-file ../frontend-eslint.json || echo "ESLint completed with issues"
 
                                 echo "Running ESLint on backend..."
-                                cd ..\\backend
+                                cd ../backend
                                 npm run lint -- --format json --output-file ../backend-eslint.json || echo "ESLint completed with issues"
                             '''
                         }
@@ -181,22 +181,22 @@ pipeline {
                     steps {
                         script {
                             echo "=== DEPENDENCY SECURITY SCAN ==="
-                            bat '''
+                            sh '''
                                 echo "Running Snyk security scan on frontend..."
                                 cd frontend
-                                snyk test --json --severity-threshold=medium > ..\\frontend-security.json || echo "Frontend security scan completed with issues"
+                                snyk test --json --severity-threshold=medium > ../frontend-security.json || echo "Frontend security scan completed with issues"
 
                                 echo "Running Snyk security scan on backend..."
-                                cd ..\\backend
-                                snyk test --json --severity-threshold=medium > ..\\backend-security.json || echo "Backend security scan completed with issues"
+                                cd ../backend
+                                snyk test --json --severity-threshold=medium > ../backend-security.json || echo "Backend security scan completed with issues"
 
                                 echo "Running npm audit on frontend..."
-                                cd ..\\frontend
-                                npm audit --audit-level=moderate --json > ..\\frontend-audit.json || echo "Frontend audit completed"
+                                cd ../frontend
+                                npm audit --audit-level=moderate --json > ../frontend-audit.json || echo "Frontend audit completed"
 
                                 echo "Running npm audit on backend..."
-                                cd ..\\backend
-                                npm audit --audit-level=moderate --json > ..\\backend-audit.json || echo "Backend audit completed"
+                                cd ../backend
+                                npm audit --audit-level=moderate --json > ../backend-audit.json || echo "Backend audit completed"
                             '''
 
                             // Parse and report security issues
@@ -240,22 +240,22 @@ pipeline {
                     steps {
                         script {
                             echo "=== DOCKER SECURITY SCAN ==="
-                            bat '''
+                            sh '''
                                 echo "Running Trivy security scan on Docker image..."
-                                docker run --rm -v /var/run/docker.sock:/var/run/docker.sock ^
-                                    aquasec/trivy image --format json --output docker-security.json ^
-                                    %DOCKER_IMAGE%:%BUILD_NUMBER% || echo "Docker security scan completed"
+                                docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+                                    aquasec/trivy image --format json --output docker-security.json \
+                                    ${DOCKER_IMAGE}:${BUILD_NUMBER} || echo "Docker security scan completed"
 
                                 echo "Running Docker bench security..."
-                                docker run --rm --net host --pid host --userns host --cap-add audit_control ^
-                                    -e DOCKER_CONTENT_TRUST=$DOCKER_CONTENT_TRUST ^
-                                    -v /etc:/etc:ro ^
-                                    -v /usr/bin/docker-containerd:/usr/bin/docker-containerd:ro ^
-                                    -v /usr/bin/docker-runc:/usr/bin/docker-runc:ro ^
-                                    -v /usr/lib/systemd:/usr/lib/systemd:ro ^
-                                    -v /var/lib:/var/lib:ro ^
-                                    -v /var/run/docker.sock:/var/run/docker.sock:ro ^
-                                    --label docker_bench_security ^
+                                docker run --rm --net host --pid host --userns host --cap-add audit_control \
+                                    -e DOCKER_CONTENT_TRUST=$DOCKER_CONTENT_TRUST \
+                                    -v /etc:/etc:ro \
+                                    -v /usr/bin/docker-containerd:/usr/bin/docker-containerd:ro \
+                                    -v /usr/bin/docker-runc:/usr/bin/docker-runc:ro \
+                                    -v /usr/lib/systemd:/usr/lib/systemd:ro \
+                                    -v /var/lib:/var/lib:ro \
+                                    -v /var/run/docker.sock:/var/run/docker.sock:ro \
+                                    --label docker_bench_security \
                                     docker/docker-bench-security > docker-bench-security.log || echo "Docker bench completed"
                             '''
                         }
@@ -265,9 +265,9 @@ pipeline {
                     steps {
                         script {
                             echo "=== STATIC APPLICATION SECURITY TESTING ==="
-                            bat '''
+                            sh '''
                                 echo "Running OWASP Dependency Check..."
-                                dependency-check --project DevHub --scan . --format JSON --out dependency-check-report.json ^
+                                dependency-check --project DevHub --scan . --format JSON --out dependency-check-report.json \
                                     --exclude "**/node_modules/**" --exclude "**/coverage/**" --exclude "**/build/**" || echo "OWASP check completed"
 
                                 echo "Running Semgrep security analysis..."
@@ -316,7 +316,7 @@ pipeline {
                     steps {
                         script {
                             echo "=== STAGING DEPLOYMENT ==="
-                            bat '''
+                            sh '''
                                 echo "Stopping existing staging services..."
                                 docker-compose -f docker-compose.production.yml down || echo "No existing services to stop"
 
@@ -324,13 +324,21 @@ pipeline {
                                 docker-compose -f docker-compose.production.yml up -d
 
                                 echo "Waiting for services to start..."
-                                timeout /t 60
+                                sleep 60
 
                                 echo "Running health checks..."
-                                powershell -Command "& {for ($i=1; $i -le 10; $i++) { try { Invoke-RestMethod -Uri 'http://localhost:3000/api/health' -Method Get; Write-Host 'Health check passed'; exit 0 } catch { Write-Host 'Attempt $i failed, retrying...'; Start-Sleep 10 } } exit 1 }"
+                                for i in {1..10}; do
+                                    if curl -f http://localhost:3000/api/health; then
+                                        echo "Health check passed"
+                                        break
+                                    else
+                                        echo "Attempt $i failed, retrying..."
+                                        sleep 10
+                                    fi
+                                done
 
                                 echo "Running smoke tests..."
-                                powershell -Command "& {try { Invoke-RestMethod -Uri 'http://localhost:3000/api/health' -Method Get; Write-Host 'Smoke test passed' } catch { Write-Host 'Smoke test failed'; exit 1 }}"
+                                curl -f http://localhost:3000/api/health || (echo "Smoke test failed" && exit 1)
                             '''
                         }
                     }
@@ -339,7 +347,7 @@ pipeline {
                     steps {
                         script {
                             echo "=== DATABASE MIGRATION ==="
-                            bat '''
+                            sh '''
                                 echo "Running database migrations..."
                                 cd backend
                                 npm run migrate:up || echo "No migrations to run"
@@ -356,13 +364,13 @@ pipeline {
                     echo "✅ Staging deployment successful"
                     script {
                         // Notify team of successful deployment
-                        bat 'echo "Deployment to staging completed successfully at %date% %time%"'
+                        sh 'echo "Deployment to staging completed successfully at $(date)"'
                     }
                 }
                 failure {
                     echo "❌ Staging deployment failed"
                     script {
-                        bat '''
+                        sh '''
                             echo "Collecting deployment logs..."
                             docker-compose -f docker-compose.production.yml logs > deployment-error.log 2>&1 || echo "Could not collect logs"
                         '''
@@ -382,59 +390,67 @@ pipeline {
                     echo "=== PRODUCTION RELEASE STAGE ==="
 
                     // Azure login and release
-                    bat '''
+                    sh '''
                         echo "Logging into Azure..."
-                        az login --service-principal ^
-                            --username %AZURE_CLIENT_ID% ^
-                            --password %AZURE_CLIENT_SECRET% ^
-                            --tenant %AZURE_TENANT_ID%
+                        az login --service-principal \
+                            --username ${AZURE_CLIENT_ID} \
+                            --password ${AZURE_CLIENT_SECRET} \
+                            --tenant ${AZURE_TENANT_ID}
 
                         echo "Setting Azure subscription..."
-                        az account set --subscription %AZURE_SUBSCRIPTION_ID%
+                        az account set --subscription ${AZURE_SUBSCRIPTION_ID}
 
                         echo "Pushing to Azure Container Registry..."
                         az acr login --name devhubregistry
-                        docker tag %DOCKER_IMAGE%:%BUILD_NUMBER% devhubregistry.azurecr.io/%DOCKER_IMAGE%:%BUILD_NUMBER%
-                        docker tag %DOCKER_IMAGE%:%BUILD_NUMBER% devhubregistry.azurecr.io/%DOCKER_IMAGE%:latest
-                        docker push devhubregistry.azurecr.io/%DOCKER_IMAGE%:%BUILD_NUMBER%
-                        docker push devhubregistry.azurecr.io/%DOCKER_IMAGE%:latest
+                        docker tag ${DOCKER_IMAGE}:${BUILD_NUMBER} devhubregistry.azurecr.io/${DOCKER_IMAGE}:${BUILD_NUMBER}
+                        docker tag ${DOCKER_IMAGE}:${BUILD_NUMBER} devhubregistry.azurecr.io/${DOCKER_IMAGE}:latest
+                        docker push devhubregistry.azurecr.io/${DOCKER_IMAGE}:${BUILD_NUMBER}
+                        docker push devhubregistry.azurecr.io/${DOCKER_IMAGE}:latest
 
                         echo "Creating deployment slot for blue-green deployment..."
-                        az webapp deployment slot create ^
-                            --name devhub-app ^
-                            --resource-group devhub-rg ^
-                            --slot staging ^
+                        az webapp deployment slot create \
+                            --name devhub-app \
+                            --resource-group devhub-rg \
+                            --slot staging \
                             --configuration-source devhub-app || echo "Slot already exists"
 
                         echo "Deploying to staging slot..."
-                        az webapp config container set ^
-                            --name devhub-app ^
-                            --resource-group devhub-rg ^
-                            --slot staging ^
-                            --docker-custom-image-name devhubregistry.azurecr.io/%DOCKER_IMAGE%:%BUILD_NUMBER%
+                        az webapp config container set \
+                            --name devhub-app \
+                            --resource-group devhub-rg \
+                            --slot staging \
+                            --docker-custom-image-name devhubregistry.azurecr.io/${DOCKER_IMAGE}:${BUILD_NUMBER}
 
                         echo "Waiting for staging slot to be ready..."
-                        timeout /t 120
+                        sleep 120
 
                         echo "Running production health check..."
-                        powershell -Command "& {for ($i=1; $i -le 10; $i++) { try { $response = Invoke-RestMethod -Uri 'https://devhub-app-staging.azurewebsites.net/api/health' -Method Get; Write-Host 'Production health check passed'; exit 0 } catch { Write-Host 'Health check attempt $i failed, retrying...'; Start-Sleep 15 } } exit 1 }"
+                        for i in {1..10}; do
+                            if curl -f https://devhub-app-staging.azurewebsites.net/api/health; then
+                                echo "Production health check passed"
+                                break
+                            else
+                                echo "Health check attempt $i failed, retrying..."
+                                sleep 15
+                            fi
+                        done
 
                         echo "Swapping staging to production..."
-                        az webapp deployment slot swap ^
-                            --name devhub-app ^
-                            --resource-group devhub-rg ^
-                            --slot staging ^
+                        az webapp deployment slot swap \
+                            --name devhub-app \
+                            --resource-group devhub-rg \
+                            --slot staging \
                             --target-slot production
 
                         echo "Final production health check..."
-                        powershell -Command "& {try { $response = Invoke-RestMethod -Uri 'https://devhub-app.azurewebsites.net/api/health' -Method Get; Write-Host 'Production deployment successful' } catch { Write-Host 'Production health check failed'; exit 1 }}"
+                        curl -f https://devhub-app.azurewebsites.net/api/health || (echo "Production health check failed" && exit 1)
                     '''
 
                     // Tag the successful release
-                    bat '''
+                    sh '''
                         echo "Tagging successful release..."
-                        git tag -a v%BUILD_NUMBER% -m "Release v%BUILD_NUMBER% - %BUILD_TIMESTAMP%"
-                        git push origin v%BUILD_NUMBER% || echo "Could not push tag"
+                        git tag -a v${BUILD_NUMBER} -m "Release v${BUILD_NUMBER} - ${BUILD_TIMESTAMP}"
+                        git push origin v${BUILD_NUMBER} || echo "Could not push tag"
                     '''
                 }
             }
@@ -457,12 +473,12 @@ pipeline {
                 }
                 failure {
                     echo "❌ Production release failed!"
-                    bat '''
+                    sh '''
                         echo "Rolling back production deployment..."
-                        az webapp deployment slot swap ^
-                            --name devhub-app ^
-                            --resource-group devhub-rg ^
-                            --slot production ^
+                        az webapp deployment slot swap \
+                            --name devhub-app \
+                            --resource-group devhub-rg \
+                            --slot production \
                             --target-slot staging || echo "Rollback failed"
                     '''
                     emailext (
@@ -481,19 +497,19 @@ pipeline {
                     steps {
                         script {
                             echo "=== MONITORING SETUP ==="
-                            bat '''
+                            sh '''
                                 echo "Starting monitoring stack..."
                                 cd monitoring
                                 docker-compose up -d prometheus grafana alertmanager node-exporter
 
                                 echo "Waiting for monitoring services..."
-                                timeout /t 60
+                                sleep 60
 
                                 echo "Configuring Prometheus targets..."
-                                powershell -Command "& {try { Invoke-RestMethod -Uri 'http://localhost:9090/api/v1/targets' -Method Get; Write-Host 'Prometheus is running' } catch { Write-Host 'Prometheus setup failed' }}"
+                                curl -f http://localhost:9090/api/v1/targets && echo "Prometheus is running" || echo "Prometheus setup failed"
 
                                 echo "Setting up Grafana dashboards..."
-                                powershell -Command "& {try { Invoke-RestMethod -Uri 'http://localhost:3001' -Method Get; Write-Host 'Grafana is accessible' } catch { Write-Host 'Grafana setup failed' }}"
+                                curl -f http://localhost:3001 && echo "Grafana is accessible" || echo "Grafana setup failed"
                             '''
                         }
                     }
@@ -502,43 +518,33 @@ pipeline {
                     steps {
                         script {
                             echo "=== APPLICATION HEALTH MONITORING ==="
-                            bat '''
+                            sh '''
                                 echo "Setting up health checks..."
 
                                 echo "Checking application endpoints..."
-                                powershell -Command "& {
-                                    $endpoints = @(
-                                        'http://localhost:3000/api/health',
-                                        'http://localhost:3000/api/status',
-                                        'http://localhost:3000'
-                                    )
-                                    foreach ($endpoint in $endpoints) {
-                                        try {
-                                            $response = Invoke-RestMethod -Uri $endpoint -Method Get
-                                            Write-Host \"✅ $endpoint - OK\"
-                                        } catch {
-                                            Write-Host \"❌ $endpoint - FAILED\"
-                                        }
-                                    }
-                                }"
+                                endpoints="http://localhost:3000/api/health http://localhost:3000/api/status http://localhost:3000"
+                                for endpoint in $endpoints; do
+                                    if curl -f $endpoint; then
+                                        echo "✅ $endpoint - OK"
+                                    else
+                                        echo "❌ $endpoint - FAILED"
+                                    fi
+                                done
 
                                 echo "Setting up uptime monitoring..."
-                                powershell -Command "& {
-                                    # Create a simple uptime monitoring script
-                                    $script = @'
-                                    while ($true) {
-                                        try {
-                                            $response = Invoke-RestMethod -Uri 'http://localhost:3000/api/health' -Method Get
-                                            Write-Host \"[$(Get-Date)] Health check passed\"
-                                        } catch {
-                                            Write-Host \"[$(Get-Date)] Health check failed\" -ForegroundColor Red
-                                        }
-                                        Start-Sleep 300  # Check every 5 minutes
-                                    }
-'@
-                                    $script | Out-File -FilePath 'uptime-monitor.ps1'
-                                    Write-Host 'Uptime monitoring script created'
-                                }"
+                                cat > uptime-monitor.sh << 'EOF'
+#!/bin/bash
+while true; do
+    if curl -f http://localhost:3000/api/health; then
+        echo "[$(date)] Health check passed"
+    else
+        echo "[$(date)] Health check failed"
+    fi
+    sleep 300  # Check every 5 minutes
+done
+EOF
+                                chmod +x uptime-monitor.sh
+                                echo "Uptime monitoring script created"
                             '''
                         }
                     }
@@ -547,27 +553,25 @@ pipeline {
                     steps {
                         script {
                             echo "=== PERFORMANCE MONITORING ==="
-                            bat '''
+                            sh '''
                                 echo "Setting up performance monitoring..."
 
                                 echo "Docker container metrics..."
-                                docker stats --no-stream --format "table {{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}"
+                                docker stats --no-stream --format "table {{.Container}}\\t{{.CPUPerc}}\\t{{.MemUsage}}\\t{{.NetIO}}"
 
                                 echo "Application performance tests..."
-                                powershell -Command "& {
-                                    Write-Host 'Running performance baseline tests...'
-                                    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-                                    try {
-                                        $response = Invoke-RestMethod -Uri 'http://localhost:3000/api/health' -Method Get
-                                        $stopwatch.Stop()
-                                        Write-Host \"Response time: $($stopwatch.ElapsedMilliseconds)ms\"
-                                        if ($stopwatch.ElapsedMilliseconds -gt 2000) {
-                                            Write-Host 'WARNING: Slow response time detected!' -ForegroundColor Yellow
-                                        }
-                                    } catch {
-                                        Write-Host 'Performance test failed' -ForegroundColor Red
-                                    }
-                                }"
+                                echo "Running performance baseline tests..."
+                                start_time=$(date +%s%3N)
+                                if curl -f http://localhost:3000/api/health; then
+                                    end_time=$(date +%s%3N)
+                                    response_time=$((end_time - start_time))
+                                    echo "Response time: ${response_time}ms"
+                                    if [ $response_time -gt 2000 ]; then
+                                        echo "WARNING: Slow response time detected!"
+                                    fi
+                                else
+                                    echo "Performance test failed"
+                                fi
                             '''
                         }
                     }
@@ -576,29 +580,21 @@ pipeline {
                     steps {
                         script {
                             echo "=== ALERTING SETUP ==="
-                            bat '''
+                            sh '''
                                 echo "Configuring alerting rules..."
 
                                 echo "Testing alert webhook endpoints..."
-                                powershell -Command "& {
-                                    # Test Slack webhook (if configured)
-                                    try {
-                                        # Replace with actual Slack webhook URL
-                                        # $slackPayload = @{
-                                        #     text = 'DevHub CI/CD Pipeline - Alert Test'
-                                        #     channel = '#devops'
-                                        # } | ConvertTo-Json
-                                        # Invoke-RestMethod -Uri $env:SLACK_WEBHOOK_URL -Method Post -Body $slackPayload -ContentType 'application/json'
-                                        Write-Host 'Slack webhook test completed'
-                                    } catch {
-                                        Write-Host 'Slack webhook not configured or failed'
-                                    }
-                                }"
+                                # Test Slack webhook (if configured)
+                                if [ -n "$SLACK_WEBHOOK_URL" ]; then
+                                    curl -X POST -H 'Content-type: application/json' \
+                                        --data '{"text":"DevHub CI/CD Pipeline - Alert Test","channel":"#devops"}' \
+                                        $SLACK_WEBHOOK_URL && echo "Slack webhook test completed" || echo "Slack webhook test failed"
+                                else
+                                    echo "Slack webhook not configured"
+                                fi
 
                                 echo "Setting up email alerts..."
-                                powershell -Command "& {
-                                    Write-Host 'Email alerting configured through Jenkins'
-                                }"
+                                echo "Email alerting configured through Jenkins"
 
                                 echo "Creating monitoring dashboard URLs..."
                                 echo "📊 Grafana Dashboard: http://localhost:3001"
@@ -655,10 +651,10 @@ pipeline {
     post {
         always {
             // Clean up workspace but keep important artifacts
-            bat '''
+            sh '''
                 echo "Cleaning up temporary files..."
-                del /q *.tmp 2>nul || echo "No temp files to clean"
-                del /q *.log 2>nul || echo "No log files to clean"
+                rm -f *.tmp || echo "No temp files to clean"
+                rm -f *.log || echo "No log files to clean"
             '''
 
             // Archive final build summary
@@ -695,13 +691,13 @@ Artifacts Generated:
         success {
             echo "🎉 Pipeline completed successfully!"
             script {
-                bat 'echo "✅ DevHub v%BUILD_NUMBER% pipeline completed successfully at %date% %time%"'
+                sh 'echo "✅ DevHub v${BUILD_NUMBER} pipeline completed successfully at $(date)"'
             }
         }
         failure {
             echo "💥 Pipeline failed!"
             script {
-                bat 'echo "❌ DevHub v%BUILD_NUMBER% pipeline failed at %date% %time%"'
+                sh 'echo "❌ DevHub v${BUILD_NUMBER} pipeline failed at $(date)"'
                 emailext (
                     subject: "🚨 CI/CD Pipeline Failed - DevHub v${BUILD_NUMBER}",
                     body: """
