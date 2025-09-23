@@ -34,7 +34,7 @@ pipeline {
                         
                         # Check if SonarQube is ready (wait up to 10 minutes)
                         COUNTER=0
-                        MAX_ATTEMPTS=60
+                        MAX_ATTEMPTS=10
                         
                         while [ $COUNTER -lt $MAX_ATTEMPTS ]; do
                             COUNTER=$((COUNTER + 1))
