@@ -14,31 +14,58 @@ pipeline {
        
         // Stage 3: CODE QUALITY 
         stage('Code Quality') {
+            environment {
+                SONAR_TOKEN = credentials('SONAR_TOKEN')
+            }
             steps {
                 script {
                     sh '''
-                        echo "=== COMPREHENSIVE CODE QUALITY ==="
+                        echo "=== SONARCLOUD ANALYSIS ==="
                         cd backend
                         
-                        # 1. Lint check
+                        # Download SonarScanner CLI
+                        echo "Downloading SonarScanner CLI..."
+                        wget -q https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-4.8.0.2856-linux.zip
+                        unzip -q sonar-scanner-cli-4.8.0.2856-linux.zip
+                        
+                        # Run SonarCloud analysis
+                        echo "Running SonarCloud analysis..."
+                        ./sonar-scanner-4.8.0.2856-linux/bin/sonar-scanner \
+                            -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                            -Dsonar.organization=your-organization-name \
+                            -Dsonar.sources=src \
+                            -Dsonar.host.url=https://sonarcloud.io \
+                            -Dsonar.token=${SONAR_TOKEN} \
+                            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info || echo "SonarCloud analysis completed with issues"
+                        
+                        echo "=== ADDITIONAL CODE QUALITY CHECKS ==="
+                        
+                        # ESLint check
                         echo "Running ESLint..."
+                        npx eslint src/ --format=json --output-file=eslint-results.json || true
                         npx eslint src/ || true
                         
-                        # 2. Security audit
+                        # Security audit
                         echo "Running security audit..."
+                        npm audit --audit-level=moderate --json > npm-audit.json || true
                         npm audit --audit-level=moderate || true
                         
-                        # 3. Dependency check
+                        # Dependency check
                         echo "Checking dependencies..."
                         npm outdated || true
                         
-                        # 4. Code stats
+                        # Code stats
                         echo "=== CODE STATISTICS ==="
                         find src/ -name "*.js" | wc -l | xargs echo "JavaScript files:"
                         find src/ -name "*.js" -exec wc -l {} + | tail -1
                         
                         echo "All quality checks completed!"
                     '''
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'backend/eslint-results.json,backend/npm-audit.json', allowEmptyArchive: true
                 }
             }
         }
