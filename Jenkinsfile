@@ -11,9 +11,8 @@ pipeline {
         JENKINS_EMAIL = 'stellamore99@gmail.com'
     }
 
-/*
     stages {
-
+        /*
         // Stage 3: CODE QUALITY 
         stage('Code Quality') {
             environment {
@@ -81,11 +80,12 @@ pipeline {
                     archiveArtifacts artifacts: 'backend/snyk-report.json', allowEmptyArchive: true
                 }
             }
-        }
+        } */
 
-*/
+
         // Stage 5: DEPLOY
         stage('Deploy') {
+
             parallel {
                 stage('Deploy to Staging') {
                     steps {
