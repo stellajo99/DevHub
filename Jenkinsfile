@@ -100,23 +100,38 @@ pipeline {
         }
 
 
-
-        // Stage 3: CODE QUALITY
+        // Stage 3: CODE QUALITY 
         stage('Code Quality') {
             steps {
-                withSonarQubeEnv('SonarQube') {
-                    echo "=== SONARQUBE ANALYSIS ==="
+                script {
                     sh '''
-                    cd backend
-                    npx sonar-scanner \
-                        -Dsonar.projectKey=devhub \
-                        -Dsonar.sources=src \
-                        -Dsonar.host.url=$SONAR_HOST_URL \
-                        -Dsonar.login=$SONAR_AUTH_TOKEN
+                        echo "=== STARTING SONARQUBE ==="
+                        # Run temporary SonarQube
+                        docker run -d --rm \
+                        --name temp-sonarqube \
+                        -p 9000:9000 \
+                        sonarqube:latest
+                        
+                        # Wait for startup
+                        echo "Waiting for SonarQube to start..."
+                        sleep 90
+                        
+                        echo "=== SONARQUBE ANALYSIS ==="
+                        cd backend
+                        npx sonar-scanner \
+                            -Dsonar.projectKey=devhub \
+                            -Dsonar.sources=src \
+                            -Dsonar.host.url=http://localhost:9000 \
+                            -Dsonar.login=admin \
+                            -Dsonar.password=admin
+                        
+                        echo "=== CLEANING UP ==="
+                        docker stop temp-sonarqube
                     '''
                 }
             }
         }
+
 
         // Stage 4: SECURITY
         stage('Security scan') {
