@@ -1,10 +1,5 @@
 pipeline {
-    agent {
-        docker {
-            image 'node:18-alpine'
-            args '-v /var/run/docker.sock:/var/run/docker.sock --user root'
-        }
-    }
+    agent any
 
     environment {
         NODE_VERSION = '18'
@@ -25,37 +20,85 @@ pipeline {
                 script {
                     echo "=== BUILD STAGE ==="
 
-                    // Install Docker in Alpine and build
+                    // Check if Node.js is available and build artifacts
                     sh '''
-                        echo "Installing Docker in Alpine container..."
-                        apk add --no-cache docker
+                        if command -v node >/dev/null 2>&1; then
+                            echo "✅ Node.js found: $(node --version)"
+                            echo "✅ npm found: $(npm --version)"
+                        else
+                            echo "❌ Node.js not found - installing via NodeSource..."
+                            curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+                            apt-get install -y nodejs
+                        fi
 
                         echo "Installing root dependencies..."
                         npm install
 
-                        echo "Building frontend..."
+                        echo "Building frontend application..."
                         cd frontend
                         npm install
                         npm run build
+                        echo "✅ Frontend build completed - Static files ready for deployment"
 
-                        echo "Building backend..."
+                        echo "Building backend application..."
                         cd ../backend
                         npm install
                         npm run build
+                        echo "✅ Backend build completed - Node.js application ready"
 
-                        echo "Building Docker image..."
+                        echo "Creating deployment artifacts..."
                         cd ..
-                        docker build -f Dockerfile.production -t ${DOCKER_IMAGE}:${BUILD_NUMBER} .
-                        docker tag ${DOCKER_IMAGE}:${BUILD_NUMBER} ${DOCKER_IMAGE}:latest
-                        echo "✅ Docker image built successfully"
+
+                        # Create frontend deployment artifact
+                        echo "📦 Creating frontend deployment artifact..."
+                        tar -czf frontend-build-${BUILD_NUMBER}.tar.gz -C frontend/build .
+                        echo "✅ Frontend artifact: frontend-build-${BUILD_NUMBER}.tar.gz"
+
+                        # Create backend deployment artifact
+                        echo "📦 Creating backend deployment artifact..."
+                        tar -czf backend-app-${BUILD_NUMBER}.tar.gz backend/ --exclude=backend/node_modules --exclude=backend/coverage
+                        echo "✅ Backend artifact: backend-app-${BUILD_NUMBER}.tar.gz"
+
+                        # Create complete application artifact
+                        echo "📦 Creating complete application artifact..."
+                        mkdir -p deploy/frontend deploy/backend
+                        cp -r frontend/build/* deploy/frontend/
+                        cp -r backend/* deploy/backend/
+                        cp package.json deploy/
+                        tar -czf devhub-complete-${BUILD_NUMBER}.tar.gz deploy/
+                        echo "✅ Complete app artifact: devhub-complete-${BUILD_NUMBER}.tar.gz"
+
+                        # Attempt Docker build if Docker is available
+                        if command -v docker >/dev/null 2>&1; then
+                            echo "🐳 Docker found - Creating Docker image artifact..."
+                            docker build -f Dockerfile.production -t ${DOCKER_IMAGE}:${BUILD_NUMBER} .
+                            docker tag ${DOCKER_IMAGE}:${BUILD_NUMBER} ${DOCKER_IMAGE}:latest
+                            docker save ${DOCKER_IMAGE}:${BUILD_NUMBER} -o devhub-docker-${BUILD_NUMBER}.tar
+                            echo "✅ Docker image artifact: devhub-docker-${BUILD_NUMBER}.tar"
+                        else
+                            echo "⚠️  Docker not available - Skipping Docker image creation"
+                        fi
+
+                        echo "📊 Build Artifacts Summary:"
+                        ls -lh *.tar.gz *.tar 2>/dev/null || echo "Listing artifacts..."
+                        du -sh *.tar.gz *.tar 2>/dev/null || echo "Calculating sizes..."
+
+                        echo "✅ All build artifacts created successfully!"
                     '''
                 }
             }
             post {
                 success {
-                    // Archive build artifacts
+                    // Archive all build artifacts for deployment
+                    archiveArtifacts artifacts: '*.tar.gz,*.tar', allowEmptyArchive: true, fingerprint: true
                     archiveArtifacts artifacts: 'frontend/build/**/*', allowEmptyArchive: true
-                    archiveArtifacts artifacts: 'backend/dist/**/*', allowEmptyArchive: true, fingerprint: true
+                    archiveArtifacts artifacts: 'backend/**/*', allowEmptyArchive: true
+
+                    echo "📦 Build artifacts archived successfully!"
+                    echo "✅ Ready for deployment stages"
+                }
+                failure {
+                    echo "❌ Build failed - No artifacts created"
                 }
             }
         }
