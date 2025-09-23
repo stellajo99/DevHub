@@ -4,16 +4,81 @@ pipeline {
     environment {
         NODE_VERSION = '18'
         DOCKER_IMAGE = 'devhub'
-        AZURE_SUBSCRIPTION_ID = credentials('azure-subscription-id')
-        AZURE_CLIENT_ID = credentials('azure-client-id')
-        AZURE_CLIENT_SECRET = credentials('azure-client-secret')
-        AZURE_TENANT_ID = credentials('azure-tenant-id')
-        JENKINS_EMAIL = credentials('jenkins-gmail')
         SONAR_PROJECT_KEY = 'devhub'
         BUILD_TIMESTAMP = "${new Date().format('yyyy-MM-dd-HH-mm-ss')}"
     }
 
     stages {
+        // Stage 0: CREDENTIAL TEST
+        stage('Credential Test') {
+            steps {
+                script {
+                    echo "=== TESTING CREDENTIALS ==="
+
+                    try {
+                        withCredentials([
+                            string(credentialsId: 'azure-subscription-id', variable: 'AZURE_SUB_ID'),
+                            string(credentialsId: 'azure-client-id', variable: 'AZURE_CLIENT_ID'),
+                            string(credentialsId: 'azure-client-secret', variable: 'AZURE_CLIENT_SECRET'),
+                            string(credentialsId: 'azure-tenant-id', variable: 'AZURE_TENANT_ID'),
+                            string(credentialsId: 'jenkins-gmail', variable: 'JENKINS_EMAIL')
+                        ]) {
+                            echo "✅ All credentials loaded successfully!"
+                            echo "Azure Subscription ID: ${AZURE_SUB_ID?.take(8)}..."
+                            echo "Azure Client ID: ${AZURE_CLIENT_ID?.take(8)}..."
+                            echo "Azure Tenant ID: ${AZURE_TENANT_ID?.take(8)}..."
+                            echo "Jenkins Email: ${JENKINS_EMAIL}"
+                        }
+                    } catch (Exception e) {
+                        echo "❌ Credential loading failed: ${e.getMessage()}"
+
+                        // Test individual credentials
+                        echo "Testing individual credentials..."
+
+                        try {
+                            withCredentials([string(credentialsId: 'azure-subscription-id', variable: 'TEST_VAR')]) {
+                                echo "✅ azure-subscription-id: OK"
+                            }
+                        } catch (Exception ex) {
+                            echo "❌ azure-subscription-id: ${ex.getMessage()}"
+                        }
+
+                        try {
+                            withCredentials([string(credentialsId: 'azure-client-id', variable: 'TEST_VAR')]) {
+                                echo "✅ azure-client-id: OK"
+                            }
+                        } catch (Exception ex) {
+                            echo "❌ azure-client-id: ${ex.getMessage()}"
+                        }
+
+                        try {
+                            withCredentials([string(credentialsId: 'azure-client-secret', variable: 'TEST_VAR')]) {
+                                echo "✅ azure-client-secret: OK"
+                            }
+                        } catch (Exception ex) {
+                            echo "❌ azure-client-secret: ${ex.getMessage()}"
+                        }
+
+                        try {
+                            withCredentials([string(credentialsId: 'azure-tenant-id', variable: 'TEST_VAR')]) {
+                                echo "✅ azure-tenant-id: OK"
+                            }
+                        } catch (Exception ex) {
+                            echo "❌ azure-tenant-id: ${ex.getMessage()}"
+                        }
+
+                        try {
+                            withCredentials([string(credentialsId: 'jenkins-gmail', variable: 'TEST_VAR')]) {
+                                echo "✅ jenkins-gmail: OK"
+                            }
+                        } catch (Exception ex) {
+                            echo "❌ jenkins-gmail: ${ex.getMessage()}"
+                        }
+                    }
+                }
+            }
+        }
+
         // Stage 1: BUILD
         stage('Build') {
             steps {
