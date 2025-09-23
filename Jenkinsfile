@@ -52,61 +52,70 @@ pipeline {
         stage('Test') {
             environment {
                 BE_JUNIT = 'backend/test-results.xml'
+                BE_COBERTURA = 'backend/coverage/cobertura-coverage.xml'
             }
             options {
                 timeout(time: 20, unit: 'MINUTES')
             }
             steps {
-                sh '''
-                set -euxo pipefail
+                sh '''#!/usr/bin/env bash
+            set -euxo pipefail
 
-                echo ">>> 1) Bring up test stack"
-                docker compose -f docker-compose.test.yml up -d --build test-db test-redis test-app
+            echo ">>> 1) Bring up test stack"
+            docker compose -f docker-compose.test.yml up -d --build test-db test-redis test-app
 
-                echo ">>> 2) Wait for API health (host:5001 -> container:5000)"
-                for i in $(seq 1 40); do
-                    if curl -fsS http://localhost:5001/api/health >/dev/null; then
-                    echo "API healthy"; break
-                    fi
-                    sleep 3
-                done
+            echo ">>> 2) Wait for API health (host:5001 -> container:5000)"
+            for i in {1..40}; do
+            if curl -fsS http://localhost:5001/api/health >/dev/null; then
+                echo "API healthy"; break
+            fi
+            sleep 3
+            done
 
-                echo ">>> 3) Run tests and export results"
-                docker compose -f docker-compose.test.yml exec -T test-app bash -lc '
-                    set -euxo pipefail
-                    cd /app/backend
-                    npm ci
-                    # Ensure junit reporter is available inside the container (ephemeral install)
-                    npm pkg get devDependencies.jest-junit >/dev/null 2>&1 || npm i -D jest-junit
-                    # Export JUnit XML and generate coverage
-                    JEST_JUNIT_OUTPUT="/app/backend/test-results.xml" \\
-                    npx jest backend/tests --runInBand \\
-                    --reporters=default --reporters=jest-junit \\
-                    --coverage
-                '
-                '''
+            echo ">>> 3) Run tests and export results"
+            docker compose -f docker-compose.test.yml exec -T test-app bash -lc '
+            set -euxo pipefail
+            cd /app/backend
+            npm ci
+            # ensure junit reporter exists in the ephemeral container
+            npm pkg get devDependencies.jest-junit >/dev/null 2>&1 || npm i -D jest-junit
+            # JUnit to /app/backend/test-results.xml, run tests under ./tests, plus coverage
+            JEST_JUNIT_OUTPUT="/app/backend/test-results.xml" \
+            npx jest tests --runInBand \
+                --reporters=default --reporters=jest-junit \
+                --coverage
+            '
+            '''
             }
             post {
                 always {
-                // Publish JUnit test results\
-                junit allowEmptyResults: false, testResults: "${BE_JUNIT}"
-
-                // Publish coverage if Cobertura file exists (won't fail if missing)
+                // publish JUnit (don’t fail the whole pipeline if empty)
                 script {
-                    if (fileExists('backend/coverage/cobertura-coverage.xml')) {
-                    step([$class: 'CoberturaPublisher',
-                            coberturaReportFile: 'backend/coverage/cobertura-coverage.xml',
-                            onlyStable: false, failNoReports: false,
-                            autoUpdateHealth: false, autoUpdateStability: false])
+                    if (fileExists(env.BE_JUNIT)) {
+                    junit allowEmptyResults: false, testResults: env.BE_JUNIT
+                    } else {
+                    echo "JUnit file not found at ${env.BE_JUNIT} (skipping publish)."
+                    junit allowEmptyResults: true, testResults: env.BE_JUNIT
                     }
                 }
-
-                // Tear down stack and archive coverage artifacts
+                // publish coverage if available
+                script {
+                    if (fileExists(env.BE_COBERTURA)) {
+                    step([$class: 'CoberturaPublisher',
+                            coberturaReportFile: env.BE_COBERTURA,
+                            onlyStable: false, failNoReports: false,
+                            autoUpdateHealth: false, autoUpdateStability: false])
+                    } else {
+                    echo "Cobertura file not found at ${env.BE_COBERTURA} (skipping coverage publish)."
+                    }
+                }
+                // tear down and archive
                 sh 'docker compose -f docker-compose.test.yml down -v || true'
                 archiveArtifacts artifacts: 'backend/coverage/**/*', allowEmptyArchive: true
                 }
             }
         }
+
 
 
         // Stage 3: CODE QUALITY
