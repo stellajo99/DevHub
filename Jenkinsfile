@@ -92,10 +92,10 @@ pipeline {
                             echo "=== STAGING DEPLOYMENT ==="
                             sh '''
                                 echo "Stopping existing staging services..."
-                                docker-compose -f docker-compose.production.yml down || echo "No existing services to stop"
+                                docker compose -f docker-compose.production.yml down || echo "No existing services to stop"
 
                                 echo "Starting staging deployment..."
-                                docker-compose -f docker-compose.production.yml up -d
+                                docker compose -f docker-compose.production.yml up -d
 
                                 echo "Waiting for services to start..."
                                 sleep 60
@@ -151,7 +151,7 @@ pipeline {
                     script {
                         sh '''
                             echo "Collecting deployment logs..."
-                            docker-compose -f docker-compose.production.yml logs > deployment-error.log 2>&1 || echo "Could not collect logs"
+                            docker compose -f docker-compose.production.yml logs > deployment-error.log 2>&1 || echo "Could not collect logs"
                         '''
                     }
                     archiveArtifacts artifacts: 'deployment-error.log', allowEmptyArchive: true
