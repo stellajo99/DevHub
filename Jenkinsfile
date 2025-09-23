@@ -8,11 +8,11 @@ pipeline {
         DOCKER_IMAGE = 'devhub'
         SONAR_PROJECT_KEY = 'stellajo99_DevHub'
         BUILD_TIMESTAMP = "${new Date().format('yyyy-MM-dd-HH-mm-ss')}"
+        JENKINS_EMAIL = 'stellamore99@gmail.com'
     }
 
     stages {
-       
-        // Stage 3: CODE QUALITY 
+
         // Stage 3: CODE QUALITY 
         stage('Code Quality') {
             environment {
@@ -37,29 +37,7 @@ pipeline {
                             -Dsonar.host.url=https://sonarcloud.io \
                             -Dsonar.token=${SONAR_TOKEN} \
                             -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info || echo "SonarCloud analysis completed with issues"
-                        
-                        echo "=== ADDITIONAL CODE QUALITY CHECKS ==="
-                        
-                        # ESLint check
-                        echo "Running ESLint..."
-                        npx eslint src/ --format=json --output-file=eslint-results.json || true
-                        npx eslint src/ || true
-                        
-                        # Security audit
-                        echo "Running security audit..."
-                        npm audit --audit-level=moderate --json > npm-audit.json || true
-                        npm audit --audit-level=moderate || true
-                        
-                        # Dependency check
-                        echo "Checking dependencies..."
-                        npm outdated || true
-                        
-                        # Code stats
-                        echo "=== CODE STATISTICS ==="
-                        find src/ -name "*.js" | wc -l | xargs echo "JavaScript files:"
-                        find src/ -name "*.js" -exec wc -l {} + | tail -1
-                        
-                        echo "All quality checks completed!"
+    
                     '''
                 }
             }
@@ -93,10 +71,7 @@ pipeline {
                         
                         # Optional: Generate JSON report
                         snyk test --json > snyk-report.json || true
-                        
-                        # Alternative: Run audit with npm as backup
-                        echo "=== NPM AUDIT BACKUP ==="
-                        npm audit --audit-level=moderate || true
+
                     '''
                 }
             }
@@ -110,13 +85,6 @@ pipeline {
 
         // Stage 5: DEPLOY
         stage('Deploy') {
-            when {
-                anyOf {
-                    branch 'master'
-                    branch 'develop'
-                    branch 'staging'
-                }
-            }
             parallel {
                 stage('Deploy to Staging') {
                     steps {
