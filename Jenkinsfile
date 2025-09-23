@@ -1,5 +1,11 @@
 pipeline {
-    agent any
+    agent {
+        docker {
+            image 'node:18-alpine'
+            // Don't mount Docker socket to avoid permission issues
+            args '--user root'
+        }
+    }
 
     environment {
         NODE_VERSION = '18'
@@ -20,16 +26,10 @@ pipeline {
                 script {
                     echo "=== BUILD STAGE ==="
 
-                    // Check if Node.js is available and build artifacts
+                    // Build in Node.js Alpine container
                     sh '''
-                        if command -v node >/dev/null 2>&1; then
-                            echo "✅ Node.js found: $(node --version)"
-                            echo "✅ npm found: $(npm --version)"
-                        else
-                            echo "❌ Node.js not found - installing via NodeSource..."
-                            curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-                            apt-get install -y nodejs
-                        fi
+                        echo "✅ Node.js found: $(node --version)"
+                        echo "✅ npm found: $(npm --version)"
 
                         echo "Installing root dependencies..."
                         npm install
@@ -68,33 +68,48 @@ pipeline {
                         tar -czf devhub-complete-${BUILD_NUMBER}.tar.gz deploy/
                         echo "✅ Complete app artifact: devhub-complete-${BUILD_NUMBER}.tar.gz"
 
-                        # Attempt Docker build if Docker is available
-                        if command -v docker >/dev/null 2>&1; then
-                            echo "🐳 Docker found - Creating Docker image artifact..."
-                            docker build -f Dockerfile.production -t ${DOCKER_IMAGE}:${BUILD_NUMBER} .
-                            docker tag ${DOCKER_IMAGE}:${BUILD_NUMBER} ${DOCKER_IMAGE}:latest
-                            docker save ${DOCKER_IMAGE}:${BUILD_NUMBER} -o devhub-docker-${BUILD_NUMBER}.tar
-                            echo "✅ Docker image artifact: devhub-docker-${BUILD_NUMBER}.tar"
-                        else
-                            echo "⚠️  Docker not available - Skipping Docker image creation"
-                        fi
+                        # Create package.json for deployment with metadata
+                        echo "📦 Creating deployment metadata..."
+                        cat > deployment-info.json << EOF
+{
+  "buildNumber": "${BUILD_NUMBER}",
+  "buildTimestamp": "$(date -Iseconds)",
+  "gitCommit": "${GIT_COMMIT:-unknown}",
+  "artifacts": [
+    "frontend-build-${BUILD_NUMBER}.tar.gz",
+    "backend-app-${BUILD_NUMBER}.tar.gz",
+    "devhub-complete-${BUILD_NUMBER}.tar.gz"
+  ],
+  "deploymentInstructions": {
+    "frontend": "Extract frontend-build-${BUILD_NUMBER}.tar.gz to web server root",
+    "backend": "Extract backend-app-${BUILD_NUMBER}.tar.gz and run npm install --production && npm start",
+    "complete": "Extract devhub-complete-${BUILD_NUMBER}.tar.gz for full deployment"
+  }
+}
+EOF
 
                         echo "📊 Build Artifacts Summary:"
-                        ls -lh *.tar.gz *.tar 2>/dev/null || echo "Listing artifacts..."
-                        du -sh *.tar.gz *.tar 2>/dev/null || echo "Calculating sizes..."
+                        ls -lh *.tar.gz *.json 2>/dev/null || echo "Listing artifacts..."
+                        du -sh *.tar.gz 2>/dev/null || echo "Calculating sizes..."
 
                         echo "✅ All build artifacts created successfully!"
+                        echo "📦 Artifacts ready for deployment to any environment"
                     '''
                 }
             }
             post {
                 success {
                     // Archive all build artifacts for deployment
-                    archiveArtifacts artifacts: '*.tar.gz,*.tar', allowEmptyArchive: true, fingerprint: true
+                    archiveArtifacts artifacts: '*.tar.gz,*.json', allowEmptyArchive: true, fingerprint: true
                     archiveArtifacts artifacts: 'frontend/build/**/*', allowEmptyArchive: true
-                    archiveArtifacts artifacts: 'backend/**/*', allowEmptyArchive: true
+                    archiveArtifacts artifacts: 'deploy/**/*', allowEmptyArchive: true
 
                     echo "📦 Build artifacts archived successfully!"
+                    echo "✅ Deployment artifacts:"
+                    echo "   • frontend-build-${BUILD_NUMBER}.tar.gz - Frontend static files"
+                    echo "   • backend-app-${BUILD_NUMBER}.tar.gz - Backend Node.js application"
+                    echo "   • devhub-complete-${BUILD_NUMBER}.tar.gz - Complete application bundle"
+                    echo "   • deployment-info.json - Deployment metadata and instructions"
                     echo "✅ Ready for deployment stages"
                 }
                 failure {
