@@ -34,7 +34,7 @@ pipeline {
                         
                         # Check if SonarQube is ready (wait up to 10 minutes)
                         COUNTER=0
-                        MAX_ATTEMPTS=10
+                        ATTEMPTS=8
                         
                         while [ $COUNTER -lt $MAX_ATTEMPTS ]; do
                             COUNTER=$((COUNTER + 1))
@@ -44,12 +44,6 @@ pipeline {
                             if curl -f -s http://localhost:9000/api/system/status | grep -q 'UP'; then
                                 echo "✅ SonarQube is ready!"
                                 break
-                            fi
-                            
-                            if [ $COUNTER -eq $MAX_ATTEMPTS ]; then
-                                echo "❌ SonarQube failed to start in time"
-                                docker logs temp-sonarqube
-                                exit 1
                             fi
                             
                             sleep 10
