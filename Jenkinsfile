@@ -36,7 +36,7 @@ pipeline {
                         COUNTER=0
                         ATTEMPTS=8
                         
-                        while [ $COUNTER -lt $MAX_ATTEMPTS ]; do
+                        while [ $COUNTER -lt $ATTEMPTS ]; do
                             COUNTER=$((COUNTER + 1))
                             echo "Checking SonarQube status... ($COUNTER/$ATTEMPTS)"
                             
