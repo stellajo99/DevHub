@@ -13,6 +13,7 @@ pipeline {
     stages {
        
         // Stage 3: CODE QUALITY 
+        // Stage 3: CODE QUALITY 
         stage('Code Quality') {
             environment {
                 SONAR_TOKEN = credentials('SONAR_TOKEN')
@@ -23,14 +24,13 @@ pipeline {
                         echo "=== SONARCLOUD ANALYSIS ==="
                         cd backend
                         
-                        # Download SonarScanner CLI
-                        echo "Downloading SonarScanner CLI..."
-                        wget -q https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-4.8.0.2856-linux.zip
-                        unzip -q sonar-scanner-cli-4.8.0.2856-linux.zip
+                        # Install sonar-scanner via npm
+                        echo "Installing SonarScanner..."
+                        npm install -g sonar-scanner
                         
                         # Run SonarCloud analysis
                         echo "Running SonarCloud analysis..."
-                        ./sonar-scanner-4.8.0.2856-linux/bin/sonar-scanner \
+                        sonar-scanner \
                             -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
                             -Dsonar.organization=your-organization-name \
                             -Dsonar.sources=src \
