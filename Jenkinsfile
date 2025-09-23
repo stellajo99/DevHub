@@ -4,81 +4,16 @@ pipeline {
     environment {
         NODE_VERSION = '18'
         DOCKER_IMAGE = 'devhub'
+        AZURE_SUBSCRIPTION_ID = credentials('azure-subscription-id')
+        AZURE_CLIENT_ID = credentials('azure-client-id')
+        AZURE_CLIENT_SECRET = credentials('azure-client-secret')
+        AZURE_TENANT_ID = credentials('azure-tenant-id')
+        JENKINS_EMAIL = credentials('jenkins-gmail')
         SONAR_PROJECT_KEY = 'devhub'
         BUILD_TIMESTAMP = "${new Date().format('yyyy-MM-dd-HH-mm-ss')}"
     }
 
     stages {
-        // Stage 0: CREDENTIAL TEST
-        stage('Credential Test') {
-            steps {
-                script {
-                    echo "=== TESTING CREDENTIALS ==="
-
-                    try {
-                        withCredentials([
-                            string(credentialsId: 'azure-subscription-id', variable: 'AZURE_SUB_ID'),
-                            string(credentialsId: 'azure-client-id', variable: 'AZURE_CLIENT_ID'),
-                            string(credentialsId: 'azure-client-secret', variable: 'AZURE_CLIENT_SECRET'),
-                            string(credentialsId: 'azure-tenant-id', variable: 'AZURE_TENANT_ID'),
-                            string(credentialsId: 'jenkins-gmail', variable: 'JENKINS_EMAIL')
-                        ]) {
-                            echo "✅ All credentials loaded successfully!"
-                            echo "Azure Subscription ID: ${AZURE_SUB_ID?.take(8)}..."
-                            echo "Azure Client ID: ${AZURE_CLIENT_ID?.take(8)}..."
-                            echo "Azure Tenant ID: ${AZURE_TENANT_ID?.take(8)}..."
-                            echo "Jenkins Email: ${JENKINS_EMAIL}"
-                        }
-                    } catch (Exception e) {
-                        echo "❌ Credential loading failed: ${e.getMessage()}"
-
-                        // Test individual credentials
-                        echo "Testing individual credentials..."
-
-                        try {
-                            withCredentials([string(credentialsId: 'azure-subscription-id', variable: 'TEST_VAR')]) {
-                                echo "✅ azure-subscription-id: OK"
-                            }
-                        } catch (Exception ex) {
-                            echo "❌ azure-subscription-id: ${ex.getMessage()}"
-                        }
-
-                        try {
-                            withCredentials([string(credentialsId: 'azure-client-id', variable: 'TEST_VAR')]) {
-                                echo "✅ azure-client-id: OK"
-                            }
-                        } catch (Exception ex) {
-                            echo "❌ azure-client-id: ${ex.getMessage()}"
-                        }
-
-                        try {
-                            withCredentials([string(credentialsId: 'azure-client-secret', variable: 'TEST_VAR')]) {
-                                echo "✅ azure-client-secret: OK"
-                            }
-                        } catch (Exception ex) {
-                            echo "❌ azure-client-secret: ${ex.getMessage()}"
-                        }
-
-                        try {
-                            withCredentials([string(credentialsId: 'azure-tenant-id', variable: 'TEST_VAR')]) {
-                                echo "✅ azure-tenant-id: OK"
-                            }
-                        } catch (Exception ex) {
-                            echo "❌ azure-tenant-id: ${ex.getMessage()}"
-                        }
-
-                        try {
-                            withCredentials([string(credentialsId: 'jenkins-gmail', variable: 'TEST_VAR')]) {
-                                echo "✅ jenkins-gmail: OK"
-                            }
-                        } catch (Exception ex) {
-                            echo "❌ jenkins-gmail: ${ex.getMessage()}"
-                        }
-                    }
-                }
-            }
-        }
-
         // Stage 1: BUILD
         stage('Build') {
             steps {
@@ -104,6 +39,7 @@ pipeline {
                         cd ..
                         docker build -f Dockerfile.production -t ${DOCKER_IMAGE}:${BUILD_NUMBER} .
                         docker tag ${DOCKER_IMAGE}:${BUILD_NUMBER} ${DOCKER_IMAGE}:latest
+                        echo "✅ Docker image built successfully"
                     '''
                 }
             }
@@ -358,11 +294,19 @@ pipeline {
                     ])
                 }
                 failure {
-                    emailext (
-                        subject: "SECURITY ALERT: Build #${BUILD_NUMBER} - Critical Vulnerabilities Found",
-                        body: "Critical security vulnerabilities were found in build #${BUILD_NUMBER}. Please check the security reports immediately.",
-                        to: "${JENKINS_EMAIL}"
-                    )
+                    script {
+                        try {
+                            withCredentials([string(credentialsId: 'jenkins-gmail', variable: 'EMAIL_TO')]) {
+                                emailext (
+                                    subject: "SECURITY ALERT: Build #${BUILD_NUMBER} - Critical Vulnerabilities Found",
+                                    body: "Critical security vulnerabilities were found in build #${BUILD_NUMBER}. Please check the security reports immediately.",
+                                    to: "${EMAIL_TO}"
+                                )
+                            }
+                        } catch (Exception e) {
+                            echo "Failed to send security alert email: ${e.getMessage()}"
+                        }
+                    }
                 }
             }
         }
@@ -522,19 +466,27 @@ pipeline {
             post {
                 success {
                     echo "🚀 Production release successful!"
-                    emailext (
-                        subject: "✅ Production Release v${BUILD_NUMBER} Deployed Successfully",
-                        body: """
-                        Production release v${BUILD_NUMBER} has been deployed successfully.
+                    script {
+                        try {
+                            withCredentials([string(credentialsId: 'jenkins-gmail', variable: 'EMAIL_TO')]) {
+                                emailext (
+                                    subject: "✅ Production Release v${BUILD_NUMBER} Deployed Successfully",
+                                    body: """
+                                    Production release v${BUILD_NUMBER} has been deployed successfully.
 
-                        🔗 Application URL: https://devhub-app.azurewebsites.net
-                        📊 Build Details: ${BUILD_URL}
-                        🕐 Deployed at: ${BUILD_TIMESTAMP}
+                                    🔗 Application URL: https://devhub-app.azurewebsites.net
+                                    📊 Build Details: ${BUILD_URL}
+                                    🕐 Deployed at: ${BUILD_TIMESTAMP}
 
-                        Please verify the deployment and monitor for any issues.
-                        """,
-                        to: "${JENKINS_EMAIL}"
-                    )
+                                    Please verify the deployment and monitor for any issues.
+                                    """,
+                                    to: "${EMAIL_TO}"
+                                )
+                            }
+                        } catch (Exception e) {
+                            echo "Failed to send success email: ${e.getMessage()}"
+                        }
+                    }
                 }
                 failure {
                     echo "❌ Production release failed!"
@@ -546,11 +498,19 @@ pipeline {
                             --slot production \
                             --target-slot staging || echo "Rollback failed"
                     '''
-                    emailext (
-                        subject: "🚨 URGENT: Production Release v${BUILD_NUMBER} Failed",
-                        body: "Production release v${BUILD_NUMBER} failed. Automatic rollback attempted. Please investigate immediately.",
-                        to: "${JENKINS_EMAIL}"
-                    )
+                    script {
+                        try {
+                            withCredentials([string(credentialsId: 'jenkins-gmail', variable: 'EMAIL_TO')]) {
+                                emailext (
+                                    subject: "🚨 URGENT: Production Release v${BUILD_NUMBER} Failed",
+                                    body: "Production release v${BUILD_NUMBER} failed. Automatic rollback attempted. Please investigate immediately.",
+                                    to: "${EMAIL_TO}"
+                                )
+                            }
+                        } catch (Exception e) {
+                            echo "Failed to send release failure email: ${e.getMessage()}"
+                        }
+                    }
                 }
             }
         }
@@ -675,39 +635,53 @@ EOF
                     echo "✅ Monitoring and alerting setup completed successfully!"
                     script {
                         // Send success notification
-                        emailext (
-                            subject: "🔍 Monitoring Setup Complete - DevHub v${BUILD_NUMBER}",
-                            body: """
-                            Monitoring and alerting has been successfully configured for DevHub v${BUILD_NUMBER}.
+                        try {
+                            withCredentials([string(credentialsId: 'jenkins-gmail', variable: 'EMAIL_TO')]) {
+                                emailext (
+                                    subject: "🔍 Monitoring Setup Complete - DevHub v${BUILD_NUMBER}",
+                                    body: """
+                                    Monitoring and alerting has been successfully configured for DevHub v${BUILD_NUMBER}.
 
-                            📊 Monitoring Resources:
-                            • Grafana Dashboard: http://localhost:3001
-                            • Prometheus Metrics: http://localhost:9090
-                            • AlertManager: http://localhost:9093
+                                    📊 Monitoring Resources:
+                                    • Grafana Dashboard: http://localhost:3001
+                                    • Prometheus Metrics: http://localhost:9090
+                                    • AlertManager: http://localhost:9093
 
-                            🔍 Health Check URLs:
-                            • Application Health: http://localhost:3000/api/health
-                            • Production URL: https://devhub-app.azurewebsites.net
+                                    🔍 Health Check URLs:
+                                    • Application Health: http://localhost:3000/api/health
+                                    • Production URL: https://devhub-app.azurewebsites.net
 
-                            The system is now being monitored for:
-                            ✓ Application uptime and health
-                            ✓ Performance metrics and response times
-                            ✓ Resource utilization (CPU, Memory, Network)
-                            ✓ Error rates and exceptions
+                                    The system is now being monitored for:
+                                    ✓ Application uptime and health
+                                    ✓ Performance metrics and response times
+                                    ✓ Resource utilization (CPU, Memory, Network)
+                                    ✓ Error rates and exceptions
 
-                            Alerts will be sent to this email for any critical issues.
-                            """,
-                            to: "${JENKINS_EMAIL}"
-                        )
+                                    Alerts will be sent to this email for any critical issues.
+                                    """,
+                                    to: "${EMAIL_TO}"
+                                )
+                            }
+                        } catch (Exception e) {
+                            echo "Failed to send monitoring success email: ${e.getMessage()}"
+                        }
                     }
                 }
                 failure {
                     echo "❌ Monitoring setup failed!"
-                    emailext (
-                        subject: "🚨 Monitoring Setup Failed - DevHub v${BUILD_NUMBER}",
-                        body: "Monitoring and alerting setup failed for DevHub v${BUILD_NUMBER}. Please check the build logs and configure monitoring manually.",
-                        to: "${JENKINS_EMAIL}"
-                    )
+                    script {
+                        try {
+                            withCredentials([string(credentialsId: 'jenkins-gmail', variable: 'EMAIL_TO')]) {
+                                emailext (
+                                    subject: "🚨 Monitoring Setup Failed - DevHub v${BUILD_NUMBER}",
+                                    body: "Monitoring and alerting setup failed for DevHub v${BUILD_NUMBER}. Please check the build logs and configure monitoring manually.",
+                                    to: "${EMAIL_TO}"
+                                )
+                            }
+                        } catch (Exception e) {
+                            echo "Failed to send monitoring failure email: ${e.getMessage()}"
+                        }
+                    }
                 }
             }
         }
@@ -765,22 +739,23 @@ Artifacts Generated:
 
                 // Send failure notification
                 try {
-                    def jenkinsEmail = env.JENKINS_EMAIL ?: 'devops@company.com'
-                    emailext (
-                        subject: "🚨 CI/CD Pipeline Failed - DevHub v${BUILD_NUMBER}",
-                        body: """
-                        The CI/CD pipeline for DevHub v${BUILD_NUMBER} has failed.
+                    withCredentials([string(credentialsId: 'jenkins-gmail', variable: 'EMAIL_TO')]) {
+                        emailext (
+                            subject: "🚨 CI/CD Pipeline Failed - DevHub v${BUILD_NUMBER}",
+                            body: """
+                            The CI/CD pipeline for DevHub v${BUILD_NUMBER} has failed.
 
-                        Build Details:
-                        • Build URL: ${BUILD_URL}
-                        • Branch: ${env.BRANCH_NAME ?: 'master'}
-                        • Commit: ${env.GIT_COMMIT ?: 'N/A'}
-                        • Failed Stage: Check build logs for details
+                            Build Details:
+                            • Build URL: ${BUILD_URL}
+                            • Branch: ${env.BRANCH_NAME ?: 'master'}
+                            • Commit: ${env.GIT_COMMIT ?: 'N/A'}
+                            • Failed Stage: Check build logs for details
 
-                        Please investigate the failure and re-run the pipeline once issues are resolved.
-                        """,
-                        to: jenkinsEmail
-                    )
+                            Please investigate the failure and re-run the pipeline once issues are resolved.
+                            """,
+                            to: "${EMAIL_TO}"
+                        )
+                    }
                 } catch (Exception e) {
                     echo "Failed to send failure email: ${e.getMessage()}"
                 }
@@ -790,12 +765,13 @@ Artifacts Generated:
             echo "⚠️ Pipeline completed with warnings!"
             script {
                 try {
-                    def jenkinsEmail = env.JENKINS_EMAIL ?: 'devops@company.com'
-                    emailext (
-                        subject: "⚠️ CI/CD Pipeline Unstable - DevHub v${BUILD_NUMBER}",
-                        body: "The CI/CD pipeline for DevHub v${BUILD_NUMBER} completed but with warnings. Please review the build logs.",
-                        to: jenkinsEmail
-                    )
+                    withCredentials([string(credentialsId: 'jenkins-gmail', variable: 'EMAIL_TO')]) {
+                        emailext (
+                            subject: "⚠️ CI/CD Pipeline Unstable - DevHub v${BUILD_NUMBER}",
+                            body: "The CI/CD pipeline for DevHub v${BUILD_NUMBER} completed but with warnings. Please review the build logs.",
+                            to: "${EMAIL_TO}"
+                        )
+                    }
                 } catch (Exception e) {
                     echo "Failed to send unstable email: ${e.getMessage()}"
                 }
