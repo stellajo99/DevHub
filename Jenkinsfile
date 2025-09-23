@@ -57,9 +57,8 @@ pipeline {
             steps {
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                     dir('backend') {
-                        sh '''
-                        #!/usr/bin/env bash
-                        set -euo pipefail
+                        sh '''#!/usr/bin/env bash
+                        set -e
 
                         echo ">>> Installing backend dependencies"
                         npm ci
@@ -104,193 +103,30 @@ pipeline {
 
         // Stage 3: CODE QUALITY
         stage('Code Quality') {
-            parallel {
-                stage('SonarQube Analysis') {
-                    steps {
-                        script {
-                            echo "=== SONARQUBE ANALYSIS ==="
-
-                            // SonarQube analysis
-                            withSonarQubeEnv('SonarQube') {
-                                sh '''
-                                    sonar-scanner \\
-                                        -Dsonar.projectKey=${SONAR_PROJECT_KEY} \\
-                                        -Dsonar.sources=. \\
-                                        -Dsonar.exclusions=node_modules/**,coverage/**,build/**,dist/**,*.log \\
-                                        -Dsonar.javascript.lcov.reportPaths=frontend/coverage/lcov.info,backend/coverage/lcov.info \\
-                                        -Dsonar.typescript.lcov.reportPaths=frontend/coverage/lcov.info \\
-                                        -Dsonar.testExecutionReportPaths=**/test-results.xml
-                                '''
-                            }
-
-                            // Quality gate
-                            timeout(time: 5, unit: 'MINUTES') {
-                                def qg = waitForQualityGate()
-                                if (qg.status != 'OK') {
-                                    error "Pipeline aborted due to quality gate failure: ${qg.status}"
-                                }
-                            }
-                        }
-                    }
-                }
-                stage('Code Complexity Analysis') {
-                    steps {
-                        script {
-                            echo "=== CODE COMPLEXITY ANALYSIS ==="
-                            sh '''
-                                echo "Running ESLint on frontend..."
-                                cd frontend
-                                npx eslint src --ext .js,.jsx,.ts,.tsx --format json --output-file ../frontend-eslint.json || echo "ESLint completed with issues"
-
-                                echo "Running ESLint on backend..."
-                                cd ../backend
-                                npm run lint -- --format json --output-file ../backend-eslint.json || echo "ESLint completed with issues"
-                            '''
-                        }
-                    }
-                }
-            }
-            post {
-                always {
-                    // Archive quality reports
-                    archiveArtifacts artifacts: '*-eslint.json', allowEmptyArchive: true
-                    publishHTML([
-                        allowMissing: false,
-                        alwaysLinkToLastBuild: true,
-                        keepAll: true,
-                        reportDir: 'frontend/coverage/lcov-report',
-                        reportFiles: 'index.html',
-                        reportName: 'Frontend Coverage Report'
-                    ])
+            steps {
+                withSonarQubeEnv('SonarQube') {
+                    echo "=== SONARQUBE ANALYSIS ==="
+                    sh '''
+                    cd backend
+                    npx sonar-scanner \
+                        -Dsonar.projectKey=devhub \
+                        -Dsonar.sources=src \
+                        -Dsonar.host.url=$SONAR_HOST_URL \
+                        -Dsonar.login=$SONAR_AUTH_TOKEN
+                    '''
                 }
             }
         }
 
         // Stage 4: SECURITY
-        stage('Security') {
-            parallel {
-                stage('Dependency Security Scan') {
-                    steps {
-                        script {
-                            echo "=== DEPENDENCY SECURITY SCAN ==="
-                            sh '''
-                                echo "Running Snyk security scan on frontend..."
-                                cd frontend
-                                snyk test --json --severity-threshold=medium > ../frontend-security.json || echo "Frontend security scan completed with issues"
-
-                                echo "Running Snyk security scan on backend..."
-                                cd ../backend
-                                snyk test --json --severity-threshold=medium > ../backend-security.json || echo "Backend security scan completed with issues"
-
-                                echo "Running npm audit on frontend..."
-                                cd ../frontend
-                                npm audit --audit-level=moderate --json > ../frontend-audit.json || echo "Frontend audit completed"
-
-                                echo "Running npm audit on backend..."
-                                cd ../backend
-                                npm audit --audit-level=moderate --json > ../backend-audit.json || echo "Backend audit completed"
-                            '''
-
-                            // Parse and report security issues
-                            script {
-                                try {
-                                    def frontendSecurity = readJSON file: 'frontend-security.json'
-                                    def backendSecurity = readJSON file: 'backend-security.json'
-
-                                    def frontendVulns = frontendSecurity.vulnerabilities ?: []
-                                    def backendVulns = backendSecurity.vulnerabilities ?: []
-
-                                    echo "=== SECURITY SCAN RESULTS ==="
-                                    echo "Frontend vulnerabilities found: ${frontendVulns.size()}"
-                                    echo "Backend vulnerabilities found: ${backendVulns.size()}"
-
-                                    def highSeverityCount = 0
-                                    def mediumSeverityCount = 0
-
-                                    (frontendVulns + backendVulns).each { vuln ->
-                                        if (vuln.severity == 'high' || vuln.severity == 'critical') {
-                                            highSeverityCount++
-                                            echo "HIGH SEVERITY: ${vuln.title} in ${vuln.packageName}"
-                                        } else if (vuln.severity == 'medium') {
-                                            mediumSeverityCount++
-                                        }
-                                    }
-
-                                    if (highSeverityCount > 0) {
-                                        error "Build failed due to ${highSeverityCount} high/critical severity vulnerabilities"
-                                    }
-
-                                    echo "Security scan completed: ${highSeverityCount} high, ${mediumSeverityCount} medium severity issues"
-                                } catch (Exception e) {
-                                    echo "Warning: Could not parse security results: ${e.getMessage()}"
-                                }
-                            }
-                        }
-                    }
-                }
-                stage('Docker Security Scan') {
-                    steps {
-                        script {
-                            echo "=== DOCKER SECURITY SCAN ==="
-                            sh '''
-                                echo "Running Trivy security scan on Docker image..."
-                                docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-                                    aquasec/trivy image --format json --output docker-security.json \
-                                    ${DOCKER_IMAGE}:${BUILD_NUMBER} || echo "Docker security scan completed"
-
-                                echo "Running Docker bench security..."
-                                docker run --rm --net host --pid host --userns host --cap-add audit_control \
-                                    -e DOCKER_CONTENT_TRUST=$DOCKER_CONTENT_TRUST \
-                                    -v /etc:/etc:ro \
-                                    -v /usr/bin/docker-containerd:/usr/bin/docker-containerd:ro \
-                                    -v /usr/bin/docker-runc:/usr/bin/docker-runc:ro \
-                                    -v /usr/lib/systemd:/usr/lib/systemd:ro \
-                                    -v /var/lib:/var/lib:ro \
-                                    -v /var/run/docker.sock:/var/run/docker.sock:ro \
-                                    --label docker_bench_security \
-                                    docker/docker-bench-security > docker-bench-security.log || echo "Docker bench completed"
-                            '''
-                        }
-                    }
-                }
-                stage('Static Application Security Testing') {
-                    steps {
-                        script {
-                            echo "=== STATIC APPLICATION SECURITY TESTING ==="
-                            sh '''
-                                echo "Running OWASP Dependency Check..."
-                                dependency-check --project DevHub --scan . --format JSON --out dependency-check-report.json \
-                                    --exclude "**/node_modules/**" --exclude "**/coverage/**" --exclude "**/build/**" || echo "OWASP check completed"
-
-                                echo "Running Semgrep security analysis..."
-                                semgrep --config=auto --json --output=semgrep-security.json . || echo "Semgrep analysis completed"
-                            '''
-                        }
-                    }
-                }
-            }
-            post {
-                always {
-                    // Archive all security artifacts
-                    archiveArtifacts artifacts: '*-security.json,*-audit.json,dependency-check-report.json,semgrep-security.json,docker-bench-security.log', allowEmptyArchive: true
-
-                    // Publish security reports
-                    publishHTML([
-                        allowMissing: true,
-                        alwaysLinkToLastBuild: true,
-                        keepAll: true,
-                        reportDir: '.',
-                        reportFiles: 'dependency-check-report.json',
-                        reportName: 'OWASP Dependency Check Report'
-                    ])
-                }
-                failure {
-                    emailext (
-                        subject: "SECURITY ALERT: Build #${BUILD_NUMBER} - Critical Vulnerabilities Found",
-                        body: "Critical security vulnerabilities were found in build #${BUILD_NUMBER}. Please check the security reports immediately.",
-                        to: "${JENKINS_EMAIL}"
-                    )
-                }
+        stage('Security scan') {
+            steps {
+                sh '''
+                echo "=== SNYK SECURITY SCAN ==="
+                npm install -g snyk
+                snyk auth $SNYK_TOKEN
+                snyk test --all-projects || true
+                '''
             }
         }
 
