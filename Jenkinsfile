@@ -108,7 +108,7 @@ pipeline {
                                     COUNTER=$((COUNTER + 1))
                                     echo "Health check attempt $COUNTER/$MAX_ATTEMPTS"
                                     
-                                    if curl -f http://localhost:3000/api/health; then
+                                    if curl -f http://localhost:4000/api/health; then
                                         echo "Health check passed"
                                         break
                                     fi

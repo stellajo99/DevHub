@@ -87,7 +87,7 @@ services:
       RATE_LIMIT_MAX: 1000
       TRUST_PROXY: "true"
     ports:
-      - "5000:5000"
+      - "4000:5000"
     volumes:
       - ./logs:/app/logs
       - ./uploads:/app/uploads
