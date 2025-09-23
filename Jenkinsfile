@@ -650,16 +650,9 @@ EOF
 
     post {
         always {
-            node {
-                // Clean up workspace but keep important artifacts
-                sh '''
-                    echo "Cleaning up temporary files..."
-                    rm -f *.tmp || echo "No temp files to clean"
-                    rm -f *.log || echo "No log files to clean"
-                '''
-
-                // Archive final build summary
-                script {
+            script {
+                try {
+                    // Archive final build summary
                     def buildSummary = """
 Build Summary for DevHub v${BUILD_NUMBER}
 ==========================================
@@ -687,19 +680,24 @@ Artifacts Generated:
 """
                     writeFile file: 'build-summary.txt', text: buildSummary
                     archiveArtifacts artifacts: 'build-summary.txt', allowEmptyArchive: true
+                } catch (Exception e) {
+                    echo "Failed to create build summary: ${e.getMessage()}"
                 }
             }
+
+            // Clean workspace
+            cleanWs()
         }
         success {
             echo "🎉 Pipeline completed successfully!"
-            node {
-                sh 'echo "✅ DevHub v${BUILD_NUMBER} pipeline completed successfully at $(date)"'
+            script {
+                echo "✅ DevHub v${BUILD_NUMBER} pipeline completed successfully at ${new Date()}"
             }
         }
         failure {
             echo "💥 Pipeline failed!"
-            node {
-                sh 'echo "❌ DevHub v${BUILD_NUMBER} pipeline failed at $(date)"'
+            script {
+                echo "❌ DevHub v${BUILD_NUMBER} pipeline failed at ${new Date()}"
             }
             emailext (
                 subject: "🚨 CI/CD Pipeline Failed - DevHub v${BUILD_NUMBER}",
