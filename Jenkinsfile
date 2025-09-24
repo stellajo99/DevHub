@@ -13,7 +13,7 @@ pipeline {
     stages {
 
 
-/*
+
         // Stage 5: DEPLOY
         stage('Deploy') {
             environment {
@@ -121,7 +121,7 @@ pipeline {
                     archiveArtifacts artifacts: 'deployment-error.log', allowEmptyArchive: true
                 }
             }
-        } */
+        } 
 
         // Stage 6: RELEASE
         stage('Release') {
@@ -202,13 +202,16 @@ pipeline {
                         az acr update -n devhubregistry --admin-enabled true
 
                         echo "Deploying to Azure Container Instances..."
+                        REGISTRY_USERNAME=$(az acr credential show --name devhubregistry --query username -o tsv)
+                        REGISTRY_PASSWORD=$(az acr credential show --name devhubregistry --query passwords[0].value -o tsv)
+
                         az container create \
                             --resource-group devhub-rg \
                             --name devhub-container \
-                            --image devhubregistry.azurecr.io/${DOCKER_IMAGE}:${BUILD_NUMBER} \
+                            --image devhubregistry.azurecr.io/devhub:${BUILD_NUMBER} \
                             --registry-login-server devhubregistry.azurecr.io \
-                            --registry-username $(az acr credential show --name devhubregistry --query username -o tsv) \
-                            --registry-password $(az acr credential show --name devhubregistry --query passwords[0].value -o tsv) \
+                            --registry-username $REGISTRY_USERNAME \
+                            --registry-password $REGISTRY_PASSWORD \
                             --dns-name-label devhub-app-${BUILD_NUMBER} \
                             --ports 3000 \
                             --cpu 1 \
