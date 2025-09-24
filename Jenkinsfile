@@ -164,12 +164,6 @@ pipeline {
                         echo "Setting Azure subscription..."
                         az account set --subscription ${AZURE_SUBSCRIPTION_ID}
 
-                        echo "Registering required Azure resource providers..."
-                        az provider register --namespace Microsoft.ContainerRegistry --wait
-                        az provider register --namespace Microsoft.Web --wait
-                        az provider register --namespace Microsoft.Storage --wait
-                        echo "Resource providers registered successfully"
-
                         echo "Checking and creating Azure resources if needed..."
 
                         # Check and create resource group
@@ -191,7 +185,7 @@ pipeline {
                         # Check and create App Service plan
                         if ! az appservice plan show --name devhub-plan --resource-group devhub-rg > /dev/null 2>&1; then
                             echo "Creating App Service plan devhub-plan..."
-                            az appservice plan create --name devhub-plan --resource-group devhub-rg --sku B1 --is-linux
+                            az appservice plan create --name devhub-plan --resource-group devhub-rg --sku F1 --is-linux
                         else
                             echo "App Service plan devhub-plan already exists"
                         fi
