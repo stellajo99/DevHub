@@ -222,13 +222,16 @@ pipeline {
                         echo "Waiting for container to be ready..."
                         sleep 60
 
+                        echo "=== Container Logs ==="
+                        az container logs --name devhub-container --resource-group devhub-rg
+
                         # Get the container URL
                         CONTAINER_URL=$(az container show --name devhub-container --resource-group devhub-rg --query ipAddress.fqdn -o tsv)
                         echo "Container deployed at: http://$CONTAINER_URL:3000"
 
                         echo "Running production health check..."
                         COUNTER=0
-                        MAX_ATTEMPTS=10
+                        MAX_ATTEMPTS=7
                         
                         while [ $COUNTER -lt $MAX_ATTEMPTS ]; do
                             COUNTER=$((COUNTER + 1))
