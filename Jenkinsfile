@@ -115,11 +115,26 @@ pipeline {
 
                 echo "▶ Wait for health endpoint and database connection"
                 for i in {1..40}; do
-                  if curl -sf http://127.0.0.1:5000/api/health | grep -q '"status":"OK"'; then
+                  # Check if server process is still running
+                  if [ -f backend/test-server.pid ]; then
+                    PID=\$(cat backend/test-server.pid)
+                    if ! kill -0 \$PID 2>/dev/null; then
+                      echo "❌ Server process died! Showing logs:"
+                      cat backend/test-server.log
+                      exit 1
+                    fi
+                  fi
+
+                  HEALTH_RESPONSE=\$(curl -s http://127.0.0.1:5000/api/health 2>/dev/null || echo "")
+                  if echo "\$HEALTH_RESPONSE" | grep -q '"status":"OK"'; then
                     echo "✅ Server and database are ready"
                     break
+                  elif [ ! -z "\$HEALTH_RESPONSE" ]; then
+                    echo "⏳ Server responding but not ready... (attempt \$i/40)"
+                    echo "   Response: \$HEALTH_RESPONSE"
+                    sleep 2
                   else
-                    echo "⏳ Waiting for server/database... (attempt \$i/40)"
+                    echo "⏳ Server not responding... (attempt \$i/40)"
                     sleep 2
                   fi
                 done
