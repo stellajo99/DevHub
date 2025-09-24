@@ -118,6 +118,15 @@ pipeline {
                   echo "❌ Cannot connect to MongoDB port \$MONGO_PORT from host"
                 fi
 
+                echo "Testing MongoDB with mongosh from host..."
+                if mongosh "mongodb://127.0.0.1:\$MONGO_PORT/test" --eval "db.adminCommand('ping')" --quiet; then
+                  echo "✅ Can connect to MongoDB with mongosh"
+                else
+                  echo "❌ Cannot connect to MongoDB with mongosh"
+                  echo "Trying to diagnose MongoDB connection..."
+                  docker logs ci-mongo --tail 20
+                fi
+
                 echo "▶ Install backend deps"
                 pushd backend >/dev/null
                 npm ci
@@ -134,9 +143,9 @@ pipeline {
                 node backend/src/server.js > backend/test-server.log 2>&1 & echo \$! > backend/test-server.pid
 
                 echo "Server started with PID: \$(cat backend/test-server.pid)"
-                sleep 2
+                sleep 3
                 echo "Initial server log output:"
-                head -n 10 backend/test-server.log || echo "No log output yet"
+                cat backend/test-server.log || echo "No log output yet"
 
                 echo "▶ Wait for health endpoint and database connection"
                 for i in {1..40}; do
@@ -162,7 +171,25 @@ pipeline {
                     echo "⏳ Server not responding... (attempt \$i/40)"
                     sleep 2
                   fi
+
+                  # Show server logs if we're failing for a while
+                  if [ \$i -eq 20 ]; then
+                    echo "🔍 Still failing after 20 attempts, showing server logs:"
+                    cat backend/test-server.log || echo "No server logs available"
+                  fi
                 done
+
+                # Final check - if we exhausted all attempts, show logs
+                FINAL_HEALTH=\$(curl -s http://127.0.0.1:5000/api/health 2>/dev/null || echo "")
+                if ! echo "\$FINAL_HEALTH" | grep -q '"status":"OK"'; then
+                  echo "❌ Health check failed after all attempts"
+                  echo "Final health response: \$FINAL_HEALTH"
+                  echo "Server logs:"
+                  cat backend/test-server.log || echo "No server logs available"
+                  echo "MongoDB logs:"
+                  docker logs ci-mongo --tail 30 || echo "No MongoDB logs available"
+                  exit 1
+                fi
 
                 echo "▶ Run Jest (unit + integration) with JUnit + coverage"
                 pushd backend >/dev/null
