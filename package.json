@@ -11,7 +11,8 @@
     "install-deps": "npm install && cd backend && npm install && cd ../frontend && npm install"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "mongodb-memory-server": "^10.2.1"
   },
   "workspaces": [
     "backend",
