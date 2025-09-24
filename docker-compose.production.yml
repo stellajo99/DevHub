@@ -117,10 +117,10 @@ services:
       - "19090:9090"
     volumes:
       # dir -> dir (host dir to container dir)
-      - ./monitoring/prometheus:/etc/prometheus:ro
+      - ./:/app:ro
       - prod_prometheus_data:/prometheus
     command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--config.file=/app/monitoring/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--storage.tsdb.retention.time=30d'
       - '--web.enable-lifecycle'
@@ -161,8 +161,7 @@ services:
       GF_INSTALL_PLUGINS: grafana-piechart-panel
     volumes:
       - prod_grafana_data:/var/lib/grafana
-      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
-      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./:/app:ro
     networks:
       - prod-network
     depends_on:
@@ -208,10 +207,10 @@ services:
     ports:
       - "19093:9093"
     volumes:
-      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./:/app:ro
       - prod_alertmanager_data:/alertmanager
     command:
-      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--config.file=/app/monitoring/alertmanager.yml'
       - '--storage.path=/alertmanager'
       - '--web.external-url=http://localhost:19093'
     networks:
