@@ -13,7 +13,7 @@ pipeline {
     stages {
 
 
-
+/*
         // Stage 5: DEPLOY
         stage('Deploy') {
             environment {
@@ -121,9 +121,8 @@ pipeline {
                     archiveArtifacts artifacts: 'deployment-error.log', allowEmptyArchive: true
                 }
             }
-        }
+        } */
 
-        // Stage 6: RELEASE
         // Stage 6: RELEASE
         stage('Release') {
             when {
@@ -198,6 +197,9 @@ pipeline {
                             echo "Waiting for container deletion..."
                             sleep 30
                         fi
+
+                        echo "Enabling admin access for Container Registry..."
+                        az acr update -n devhubregistry --admin-enabled true
 
                         echo "Deploying to Azure Container Instances..."
                         az container create \
