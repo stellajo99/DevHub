@@ -45,6 +45,4 @@ app.listen(PORT, () => {
   console.log(`DevHub Backend running on port ${PORT} - Updated API`);
 });
 
-
-
 module.exports = app;
