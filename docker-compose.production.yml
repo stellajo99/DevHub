@@ -1,5 +1,4 @@
 # Docker Compose configuration for DevHub production environment
-version: '3.8'
 
 services:
   # Production Database
@@ -233,9 +232,10 @@ services:
     ports:
       - "3000:80"
     volumes:
-      - ${PWD}/nginx.production.conf:/etc/nginx/nginx.conf:ro
-      - ${PWD}/logs:/var/log/nginx
+      - ./:/app:ro
+      - ./logs:/var/log/nginx
       - frontend-build:/usr/share/nginx/html
+    command: ["nginx", "-c", "/app/nginx.production.conf", "-g", "daemon off;"]
     networks:
       - prod-network
     depends_on:
