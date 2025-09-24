@@ -79,164 +79,92 @@ pipeline {
     } 
 
     stage('Test') {
-        environment {
-            BE_JUNIT     = 'backend/junit.xml'
-            BE_LCOV      = 'backend/coverage/lcov.info'
-            BE_COBERTURA = 'backend/coverage/cobertura-coverage.xml'
+      environment {
+        NODE_ENV = 'test'
+      }
+      steps {
+        script {
+          echo "🧪 === TEST STAGE ==="
+
+        
+          sh '''
+            set -e
+            echo "▶ Start MongoDB on a RANDOM host port"
+            docker rm -f devhub-ci-mongo >/dev/null 2>&1 || true
+            CID=$(docker run -d --name devhub-ci-mongo -p 0:27017 mongo:7 --quiet)
+   
+            HOST_PORT=$(docker port devhub-ci-mongo 27017/tcp | awk -F: '{print $2}')
+            echo "Mongo is using random port: ${HOST_PORT}"
+
+            echo "▶ Testing MongoDB connectivity from Jenkins container"
+          
+            (command -v nc >/dev/null) || (apt-get update && apt-get install -y netcat-openbsd >/dev/null)
+            (command -v mongosh >/dev/null) || (apt-get update && apt-get install -y mongodb-mongosh >/dev/null)
+
+        
+            DB_HOST=host.docker.internal
+         
+            if ! ping -c1 -W1 ${DB_HOST} >/dev/null 2>&1; then
+              DB_HOST=$(ip route | awk "/default/ {print \$3}" | head -n1)
+            fi
+
+            echo "▶ Wait Mongo up..."
+            for i in $(seq 1 30); do
+              if nc -z ${DB_HOST} ${HOST_PORT}; then
+                echo "✅ Mongo reachable at ${DB_HOST}:${HOST_PORT}"
+                break
+              fi
+              echo "⏳ Waiting Mongo... ($i/30)"
+              sleep 1
+            done
+
+            echo "▶ Smoke test with mongosh"
+            mongosh "mongodb://${DB_HOST}:${HOST_PORT}/admin" --eval "db.runCommand({ ping: 1 })" --quiet
+
+            echo "▶ Install backend deps"
+            cd backend
+            npm ci --no-audit --prefer-offline
+            cd ..
+
+            echo "▶ Start backend server in background (PORT=5000)"
+            export PORT=5000
+            export JWT_SECRET=testsecret
+            export MONGODB_URI="mongodb://${DB_HOST}:${HOST_PORT}/devhub_ci?directConnection=true"
+            node backend/src/server.js > backend_test.log 2>&1 &
+            SRV_PID=$!
+            echo "Server started with PID: ${SRV_PID}"
+
+            echo "▶ Wait for health endpoint and database connection"
+       
+            for i in $(seq 1 60); do
+              RES=$(curl -s "http://127.0.0.1:${PORT}/api/health" || true)
+              echo "Health: $RES"
+              echo "$RES" | grep -q '"status":"OK"' && echo "$RES" | grep -q '"database":{"status":"connected"}' && break
+              sleep 1
+            done
+
+            echo "▶ Run tests"
+            cd backend
+            npm test -- --runInBand || EXIT_CODE=$?
+            cd ..
+
+            echo "▶ Stop backend"
+            kill ${SRV_PID} 2>/dev/null || true
+
+            echo "▶ Teardown Mongo"
+            docker rm -f devhub-ci-mongo >/dev/null 2>&1 || true
+
+            exit ${EXIT_CODE:-0}
+          '''
         }
-        steps {
-            script { echo "🧪 === TEST STAGE ===" }
-
-            catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-            sh """#!/usr/bin/env bash
-                set -euo pipefail
-
-                echo "▶ Start MongoDB on a RANDOM host port"
-                docker rm -f ci-mongo >/dev/null 2>&1 || true
-
-                # Use a random available port instead of host networking
-                # Try multiple approaches to get a random port
-                if command -v python3 >/dev/null 2>&1; then
-                  MONGO_PORT=\$(python3 -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()")
-                elif command -v python >/dev/null 2>&1; then
-                  MONGO_PORT=\$(python -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()")
-                else
-                  # Fallback to a high port range if Python is not available
-                  MONGO_PORT=\$((27000 + RANDOM % 1000))
-                  echo "⚠️ Python not available, using fallback port: \$MONGO_PORT"
-                fi
-                docker run -d --name ci-mongo -p \${MONGO_PORT}:27017 mongo:6 >/dev/null
-                echo "Mongo is using random port: \$MONGO_PORT"
-
-                echo "▶ Testing MongoDB connectivity"
-                echo "Waiting for MongoDB to be ready..."
-                for i in {1..30}; do
-                  if docker exec ci-mongo mongosh --eval "db.adminCommand('ping')" >/dev/null 2>&1; then
-                    echo "✅ MongoDB container is ready"
-                    break
-                  else
-                    echo "⏳ MongoDB not ready yet... (attempt \$i/30)"
-                    sleep 1
-                  fi
-                done
-
-                echo "Testing host connectivity to MongoDB..."
-                if command -v nc >/dev/null 2>&1 && nc -z 127.0.0.1 \$MONGO_PORT; then
-                  echo "✅ Host can connect to MongoDB port \$MONGO_PORT"
-                else
-                  echo "⚠️ nc not available or cannot connect to MongoDB port \$MONGO_PORT from host"
-                fi
-
-                echo "Testing MongoDB with mongosh from host..."
-                if command -v mongosh >/dev/null 2>&1 && mongosh "mongodb://127.0.0.1:\$MONGO_PORT/test" --eval "db.adminCommand('ping')" --quiet; then
-                  echo "✅ Can connect to MongoDB with mongosh"
-                else
-                  echo "⚠️ mongosh not available on host or cannot connect"
-                  echo "Checking if MongoDB container is responding..."
-                  docker logs ci-mongo --tail 10
-                fi
-
-                echo "▶ Install backend deps"
-                pushd backend >/dev/null
-                npm ci
-                npm i --no-save jest-junit
-                popd >/dev/null
-
-                echo "▶ Start backend server in background (PORT=5000)"
-                export JWT_SECRET="ci-secret"
-                export NODE_ENV="test"
-                export PORT=5000
-                export MONGODB_URI="mongodb://127.0.0.1:\${MONGO_PORT}/devhub_ci"
-
-                echo "Starting server with MongoDB URI: \$MONGODB_URI"
-                node backend/src/server.js > backend/test-server.log 2>&1 & echo \$! > backend/test-server.pid
-
-                echo "Server started with PID: \$(cat backend/test-server.pid)"
-                sleep 3
-                echo "Initial server log output:"
-                cat backend/test-server.log || echo "No log output yet"
-
-                echo "▶ Wait for health endpoint and database connection"
-                for i in {1..40}; do
-                  # Check if server process is still running
-                  if [ -f backend/test-server.pid ]; then
-                    PID=\$(cat backend/test-server.pid)
-                    if ! kill -0 \$PID 2>/dev/null; then
-                      echo "❌ Server process died! Showing logs:"
-                      cat backend/test-server.log
-                      exit 1
-                    fi
-                  fi
-
-                  HEALTH_RESPONSE=\$(curl -s http://127.0.0.1:5000/api/health 2>/dev/null || echo "")
-                  if echo "\$HEALTH_RESPONSE" | grep -q '"status":"OK"'; then
-                    echo "✅ Server and database are ready"
-                    break
-                  elif [ ! -z "\$HEALTH_RESPONSE" ]; then
-                    echo "⏳ Server responding but not ready... (attempt \$i/40)"
-                    echo "   Response: \$HEALTH_RESPONSE"
-                    sleep 2
-                  else
-                    echo "⏳ Server not responding... (attempt \$i/40)"
-                    sleep 2
-                  fi
-
-                  # Show server logs if we're failing for a while
-                  if [ \$i -eq 20 ]; then
-                    echo "🔍 Still failing after 20 attempts, showing server logs:"
-                    cat backend/test-server.log || echo "No server logs available"
-                  fi
-                done
-
-                # Final check - if we exhausted all attempts, show logs
-                FINAL_HEALTH=\$(curl -s http://127.0.0.1:5000/api/health 2>/dev/null || echo "")
-                if ! echo "\$FINAL_HEALTH" | grep -q '"status":"OK"'; then
-                  echo "❌ Health check failed after all attempts"
-                  echo "Final health response: \$FINAL_HEALTH"
-                  echo "Server logs:"
-                  cat backend/test-server.log || echo "No server logs available"
-                  echo "MongoDB logs:"
-                  docker logs ci-mongo --tail 30 || echo "No MongoDB logs available"
-                  exit 1
-                fi
-
-                echo "▶ Run Jest (unit + integration) with JUnit + coverage"
-                pushd backend >/dev/null
-                JEST_JUNIT_OUTPUT="junit.xml" \
-                npx jest tests --runInBand \
-                    --reporters=default --reporters=jest-junit \
-                    --coverage || true
-                popd >/dev/null
-            """
-            }
+      }
+      post {
+        always {
+          echo '🧹 Test stage cleanup done'
         }
-        post {
-            always {
-            script {
-                sh """#!/usr/bin/env bash
-                set -e
-                # Stop background server + remove mongo
-                if [ -f backend/test-server.pid ]; then kill \$(cat backend/test-server.pid) || true; fi
-                docker rm -f ci-mongo >/dev/null 2>&1 || true
-                """
-                if (fileExists(env.BE_JUNIT)) {
-                junit allowEmptyResults: true, testResults: env.BE_JUNIT
-                } else {
-                echo "JUnit not found at ${env.BE_JUNIT}"
-                }
-                if (fileExists(env.BE_COBERTURA)) {
-                step([$class: 'CoberturaPublisher',
-                    coberturaReportFile: env.BE_COBERTURA,
-                    onlyStable: false, failNoReports: false,
-                    autoUpdateHealth: false, autoUpdateStability: false])
-                } else {
-                echo "Cobertura not found at ${env.BE_COBERTURA} (ok)"
-                }
-            }
-            archiveArtifacts artifacts: 'backend/coverage/**/*', allowEmptyArchive: true
-            }
-        }
+      }
     }
+
 
 
 
