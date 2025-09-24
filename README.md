@@ -220,14 +220,6 @@ DevHub includes a comprehensive Jenkins pipeline with the following stages:
    - CVE detection and severity assessment
    - Automated security reporting
 
-### Triggering Builds
-```bash
-# Automatic triggers
-git push origin main        # Triggers full pipeline
-git push origin feature/*   # Triggers feature branch testing
-
-# Manual trigger via Jenkins UI or CLI
-```
 
 ## 📚 API Documentation
 
