@@ -182,6 +182,19 @@ pipeline {
                             echo "Container registry devhubregistry already exists"
                         fi
 
+                        # Check and create Cosmos DB (MongoDB API)
+                        if ! az cosmosdb show --name devhub-cosmos --resource-group devhub-rg > /dev/null 2>&1; then
+                            echo "Creating Cosmos DB with MongoDB API..."
+                            az cosmosdb create --name devhub-cosmos --resource-group devhub-rg --kind MongoDB --locations regionName=eastus --default-consistency-level Session
+                            echo "Cosmos DB created successfully"
+                        else
+                            echo "Cosmos DB devhub-cosmos already exists"
+                        fi
+
+                        # Get Cosmos DB connection string
+                        COSMOS_CONNECTION_STRING=$(az cosmosdb keys list --name devhub-cosmos --resource-group devhub-rg --type connection-strings --query connectionStrings[0].connectionString -o tsv)
+                        echo "Retrieved Cosmos DB connection string"
+
                         echo "Pushing to Azure Container Registry..."
                         az acr login --name devhubregistry
                         docker tag ${DOCKER_IMAGE}:latest devhubregistry.azurecr.io/${DOCKER_IMAGE}:${BUILD_NUMBER}
@@ -222,7 +235,7 @@ pipeline {
                             --environment-variables \
                                 NODE_ENV=production \
                                 PORT=3000 \
-                                MONGODB_URI="mongodb://dummy:27017/devhub" \
+                                MONGODB_URI="$COSMOS_CONNECTION_STRING" \
                                 JWT_SECRET="debug-secret-key-${BUILD_NUMBER}"
 
                         echo "Waiting for container to be ready..."
