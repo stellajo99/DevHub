@@ -119,7 +119,7 @@ pipeline {
                     echo "✅ Server and database are ready"
                     break
                   else
-                    echo "⏳ Waiting for server/database... (attempt $i/40)"
+                    echo "⏳ Waiting for server/database... (attempt \$i/40)"
                     sleep 2
                   fi
                 done
