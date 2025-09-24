@@ -185,7 +185,7 @@ pipeline {
                         # Check and create Cosmos DB (MongoDB API)
                         if ! az cosmosdb show --name devhub-cosmos --resource-group devhub-rg > /dev/null 2>&1; then
                             echo "Creating Cosmos DB with MongoDB API..."
-                            az cosmosdb create --name devhub-cosmos --resource-group devhub-rg --kind MongoDB --locations regionName=eastus --default-consistency-level Session
+                            az cosmosdb create --name devhub-cosmos --resource-group devhub-rg --kind MongoDB --locations regionName=westus2 --default-consistency-level Session
                             echo "Cosmos DB created successfully"
                         else
                             echo "Cosmos DB devhub-cosmos already exists"
