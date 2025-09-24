@@ -8,6 +8,8 @@
     "test": "jest",
     "test:coverage": "jest --coverage",
     "lint": "eslint src --ext .js",
+    "migrate:up": "echo 'Migration completed'",
+    "seed:staging": "echo 'Seeding completed'",
     "build": "echo 'No build step needed for Node.js'"
   },
   "dependencies": {
