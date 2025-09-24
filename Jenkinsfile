@@ -34,26 +34,27 @@ pipeline {
                                 echo "Running health checks..."
                                 COUNTER=0
                                 MAX_ATTEMPTS=10
-                                
+
                                 while [ $COUNTER -lt $MAX_ATTEMPTS ]; do
                                     COUNTER=$((COUNTER + 1))
                                     echo "Health check attempt $COUNTER/$MAX_ATTEMPTS"
-                                    
-                                    if curl -f http://localhost:4000/api/health; then
+
+                                    # Check if app container is running and healthy
+                                    if docker exec devhub-prod-app curl -f http://localhost:5000/api/health; then
                                         echo "Health check passed"
                                         break
                                     fi
-                                    
+
                                     if [ $COUNTER -eq $MAX_ATTEMPTS ]; then
                                         echo "All health checks failed"
                                         exit 1
                                     fi
-                                    
+
                                     sleep 10
                                 done
 
                                 echo "Running final smoke test..."
-                                curl -f http://localhost:3000/api/health || (echo "Smoke test failed" && exit 1)
+                                docker exec devhub-nginx curl -f http://devhub-prod-app:5000/api/health || (echo "Smoke test failed" && exit 1)
                             '''
                         },
                         'Database Migration': {
@@ -232,10 +233,10 @@ pipeline {
                                 sleep 60
 
                                 echo "Configuring Prometheus targets..."
-                                curl -f http://localhost:9090/api/v1/targets && echo "Prometheus is running" || echo "Prometheus setup failed"
+                                docker exec devhub-prod-prometheus wget -qO- http://localhost:9090/api/v1/targets && echo "Prometheus is running" || echo "Prometheus setup failed"
 
                                 echo "Setting up Grafana dashboards..."
-                                curl -f http://localhost:3001 && echo "Grafana is accessible" || echo "Grafana setup failed"
+                                docker exec devhub-prod-grafana curl -f http://localhost:3000 && echo "Grafana is accessible" || echo "Grafana setup failed"
                             '''
                         }
                     }
@@ -248,9 +249,9 @@ pipeline {
                                 echo "Setting up health checks..."
 
                                 echo "Checking application endpoints..."
-                                endpoints="http://localhost:3000/api/health http://localhost:3000/api/status http://localhost:3000"
+                                endpoints="/api/health /api/status /"
                                 for endpoint in $endpoints; do
-                                    if curl -f $endpoint; then
+                                    if docker exec devhub-nginx curl -f http://devhub-prod-app:5000$endpoint; then
                                         echo "✅ $endpoint - OK"
                                     else
                                         echo "❌ $endpoint - FAILED"
@@ -261,7 +262,7 @@ pipeline {
                                 cat > uptime-monitor.sh << 'EOF'
 #!/bin/bash
 while true; do
-    if curl -f http://localhost:3000/api/health; then
+    if docker exec devhub-nginx curl -f http://devhub-prod-app:5000/api/health; then
         echo "[$(date)] Health check passed"
     else
         echo "[$(date)] Health check failed"
@@ -288,7 +289,7 @@ EOF
                                 echo "Application performance tests..."
                                 echo "Running performance baseline tests..."
                                 start_time=$(date +%s%3N)
-                                if curl -f http://localhost:3000/api/health; then
+                                if docker exec devhub-nginx curl -f http://devhub-prod-app:5000/api/health; then
                                     end_time=$(date +%s%3N)
                                     response_time=$((end_time - start_time))
                                     echo "Response time: ${response_time}ms"
@@ -323,9 +324,9 @@ EOF
                                 echo "Email alerting configured through Jenkins"
 
                                 echo "Creating monitoring dashboard URLs..."
-                                echo "📊 Grafana Dashboard: http://localhost:3001"
-                                echo "📈 Prometheus Metrics: http://localhost:9090"
-                                echo "🔔 AlertManager: http://localhost:9093"
+                                echo "📊 Grafana Dashboard: http://localhost:13000"
+                                echo "📈 Prometheus Metrics: http://localhost:19090"
+                                echo "🔔 AlertManager: http://localhost:19093"
                             '''
                         }
                     }
@@ -342,12 +343,12 @@ EOF
                             Monitoring and alerting has been successfully configured for DevHub v${BUILD_NUMBER}.
 
                             📊 Monitoring Resources:
-                            • Grafana Dashboard: http://localhost:3001
-                            • Prometheus Metrics: http://localhost:9090
-                            • AlertManager: http://localhost:9093
+                            • Grafana Dashboard: http://localhost:13000
+                            • Prometheus Metrics: http://localhost:19090
+                            • AlertManager: http://localhost:19093
 
                             🔍 Health Check URLs:
-                            • Application Health: http://localhost:3000/api/health
+                            • Application Health: http://localhost:8081/api/health
                             • Production URL: https://devhub-app.azurewebsites.net
 
                             The system is now being monitored for:
