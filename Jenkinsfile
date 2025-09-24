@@ -11,7 +11,7 @@ pipeline {
     }
 
     stages {
-        /*
+        
         // Stage 3: CODE QUALITY 
         stage('Code Quality') {
             environment {
@@ -79,7 +79,7 @@ pipeline {
                     archiveArtifacts artifacts: 'backend/snyk-report.json', allowEmptyArchive: true
                 }
             }
-        } */
+        } 
 
 
         // Stage 5: DEPLOY
