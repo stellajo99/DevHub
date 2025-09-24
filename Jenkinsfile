@@ -216,7 +216,8 @@ pipeline {
                             --ports 3000 \
                             --cpu 1 \
                             --memory 1 \
-                            --location eastus
+                            --location eastus \
+                            --os-type Linux
 
                         echo "Waiting for container to be ready..."
                         sleep 60
