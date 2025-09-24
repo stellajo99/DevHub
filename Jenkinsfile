@@ -130,8 +130,17 @@ pipeline {
                 script {
                     echo "=== PRODUCTION RELEASE STAGE ==="
                     
-                    // Check if Azure CLI is available
-                    sh 'which az || (echo "Azure CLI not installed" && exit 1)'
+                    // Install Azure CLI if not available
+                    sh '''
+                        if ! which az > /dev/null 2>&1; then
+                            echo "Installing Azure CLI..."
+                            curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+                            echo "Azure CLI installed successfully"
+                        else
+                            echo "Azure CLI already installed"
+                            az --version
+                        fi
+                    '''
 
                     sh '''
                         echo "Logging into Azure..."
