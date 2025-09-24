@@ -150,11 +150,11 @@ pipeline {
 
             echo "Running sonar-scanner"
             npx sonar-scanner \
-              -Dsonar.projectKey='${SONAR_PROJECT_KEY}' \
-              -Dsonar.organization='${SONAR_ORG}' \
+              -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+              -Dsonar.organization=${SONAR_ORG} \
               -Dsonar.sources=src \
               -Dsonar.host.url=https://sonarcloud.io \
-              -Dsonar.token='${SONAR_TOKEN}' \
+              -Dsonar.token=${SONAR_TOKEN} \
               -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info || echo "Sonar finished with issues"
           '''
         }
