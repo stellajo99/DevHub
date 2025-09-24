@@ -99,6 +99,25 @@ pipeline {
                 MONGO_PORT=\$(docker inspect -f '{{(index (index .NetworkSettings.Ports "27017/tcp") 0).HostPort}}' ci-mongo)
                 echo "Mongo is published on host port: \$MONGO_PORT"
 
+                echo "▶ Testing MongoDB connectivity"
+                echo "Waiting for MongoDB to be ready..."
+                for i in {1..30}; do
+                  if docker exec ci-mongo mongosh --eval "db.adminCommand('ping')" >/dev/null 2>&1; then
+                    echo "✅ MongoDB container is ready"
+                    break
+                  else
+                    echo "⏳ MongoDB not ready yet... (attempt \$i/30)"
+                    sleep 1
+                  fi
+                done
+
+                echo "Testing host connectivity to MongoDB..."
+                if nc -z 127.0.0.1 \$MONGO_PORT; then
+                  echo "✅ Host can connect to MongoDB port \$MONGO_PORT"
+                else
+                  echo "❌ Cannot connect to MongoDB port \$MONGO_PORT from host"
+                fi
+
                 echo "▶ Install backend deps"
                 pushd backend >/dev/null
                 npm ci
@@ -111,7 +130,13 @@ pipeline {
                 export PORT=5000
                 export MONGODB_URI="mongodb://127.0.0.1:\${MONGO_PORT}/devhub_ci"
 
+                echo "Starting server with MongoDB URI: \$MONGODB_URI"
                 node backend/src/server.js > backend/test-server.log 2>&1 & echo \$! > backend/test-server.pid
+
+                echo "Server started with PID: \$(cat backend/test-server.pid)"
+                sleep 2
+                echo "Initial server log output:"
+                head -n 10 backend/test-server.log || echo "No log output yet"
 
                 echo "▶ Wait for health endpoint and database connection"
                 for i in {1..40}; do
