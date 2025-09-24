@@ -124,6 +124,7 @@ pipeline {
         }
 
         // Stage 6: RELEASE
+        // Stage 6: RELEASE
         stage('Release') {
             when {
                 anyOf {
@@ -184,8 +185,8 @@ pipeline {
 
                         echo "Pushing to Azure Container Registry..."
                         az acr login --name devhubregistry
-                        docker tag ${DOCKER_IMAGE}:${BUILD_NUMBER} devhubregistry.azurecr.io/${DOCKER_IMAGE}:${BUILD_NUMBER}
-                        docker tag ${DOCKER_IMAGE}:${BUILD_NUMBER} devhubregistry.azurecr.io/${DOCKER_IMAGE}:latest
+                        docker tag ${DOCKER_IMAGE}:latest devhubregistry.azurecr.io/${DOCKER_IMAGE}:${BUILD_NUMBER}
+                        docker tag ${DOCKER_IMAGE}:latest devhubregistry.azurecr.io/${DOCKER_IMAGE}:latest
                         docker push devhubregistry.azurecr.io/${DOCKER_IMAGE}:${BUILD_NUMBER}
                         docker push devhubregistry.azurecr.io/${DOCKER_IMAGE}:latest
 
