@@ -191,9 +191,9 @@ pipeline {
 
                         # Stop existing container if it exists
                         echo "Checking for existing container instance..."
-                        if az container show --name devhub-container --resource-group devhub-rg > /dev/null 2>&1; then
+                        if az container show --name devhub-container-debug --resource-group devhub-rg > /dev/null 2>&1; then
                             echo "Stopping existing container instance..."
-                            az container delete --name devhub-container --resource-group devhub-rg --yes
+                            az container delete --name devhub-container-debug --resource-group devhub-rg --yes
                             echo "Waiting for container deletion..."
                             sleep 30
                         fi
@@ -208,11 +208,11 @@ pipeline {
                         az container create \
                             --resource-group devhub-rg \
                             --name devhub-container-debug \
-                            --image devhubregistry.azurecr.io/devhub:28 \
+                            --image devhubregistry.azurecr.io/devhub:${BUILD_NUMBER} \
                             --registry-login-server devhubregistry.azurecr.io \
-                            --registry-username devhubregistry \
-                            --registry-password nwx6ES9Xc8zGtP6M3JRQJudb3NuEiYXLgru3/YxZ8l+ACRDxuZHJ \
-                            --dns-name-label devhub-app-debug \
+                            --registry-username $REGISTRY_USERNAME \
+                            --registry-password $REGISTRY_PASSWORD \
+                            --dns-name-label devhub-app-debug-${BUILD_NUMBER} \
                             --ports 3000 \
                             --cpu 1 \
                             --memory 1 \
@@ -223,16 +223,16 @@ pipeline {
                                 NODE_ENV=production \
                                 PORT=3000 \
                                 MONGODB_URI="mongodb://dummy:27017/devhub" \
-                                JWT_SECRET="debug-secret-key"
+                                JWT_SECRET="debug-secret-key-${BUILD_NUMBER}"
 
                         echo "Waiting for container to be ready..."
                         sleep 60
 
                         echo "=== Container Logs ==="
-                        az container logs --name devhub-container --resource-group devhub-rg
+                        az container logs --name devhub-container-debug --resource-group devhub-rg
 
                         # Get the container URL
-                        CONTAINER_URL=$(az container show --name devhub-container --resource-group devhub-rg --query ipAddress.fqdn -o tsv)
+                        CONTAINER_URL=$(az container show --name devhub-container-debug --resource-group devhub-rg --query ipAddress.fqdn -o tsv)
                         echo "Container deployed at: http://$CONTAINER_URL:3000"
 
                         echo "Running production health check..."
@@ -243,7 +243,7 @@ pipeline {
                             COUNTER=$((COUNTER + 1))
                             echo "Health check attempt $COUNTER/$MAX_ATTEMPTS"
                             
-                            if curl -f http://$CONTAINER_URL:3000/health; then
+                            if curl -f http://$CONTAINER_URL:3000/api/health; then
                                 echo "Production health check passed"
                                 echo "Application is available at: http://$CONTAINER_URL:3000"
                                 break
@@ -270,7 +270,7 @@ pipeline {
                 success {
                     echo "Production release successful"
                     script {
-                        def containerUrl = sh(script: "az container show --name devhub-container --resource-group devhub-rg --query ipAddress.fqdn -o tsv", returnStdout: true).trim()
+                        def containerUrl = sh(script: "az container show --name devhub-container-debug --resource-group devhub-rg --query ipAddress.fqdn -o tsv", returnStdout: true).trim()
                         emailext (
                             subject: "Production Release v${BUILD_NUMBER} Deployed Successfully",
                             body: """
@@ -290,7 +290,7 @@ pipeline {
                     echo "Production release failed"
                     sh '''
                         echo "Cleaning up failed deployment..."
-                        az container delete --name devhub-container --resource-group devhub-rg --yes || echo "Cleanup failed"
+                        az container delete --name devhub-container-debug --resource-group devhub-rg --yes || echo "Cleanup failed"
                     '''
                     emailext (
                         subject: "URGENT: Production Release v${BUILD_NUMBER} Failed",
