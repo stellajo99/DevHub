@@ -79,58 +79,83 @@ pipeline {
     }
 
     stage('Test') {
-      environment {
-        BE_JUNIT     = 'backend/test-results.xml'
-        BE_LCOV      = 'backend/coverage/lcov.info'
-        BE_COBERTURA = 'backend/coverage/cobertura-coverage.xml'
-      }
-      steps {
-        script {
-          echo "🧪 === TEST STAGE ==="
+        environment {
+            BE_JUNIT     = 'backend/junit.xml'
+            BE_LCOV      = 'backend/coverage/lcov.info'
+            BE_COBERTURA = 'backend/coverage/cobertura-coverage.xml'
         }
-        // Back-end unit tests with coverage; never hard-fail the whole pipeline here
-        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-          dir('backend') {
-            sh '''#!/usr/bin/env bash
-              set -euo pipefail
-              echo "▶ Installing backend test deps"
-              npm ci
-              npm install --no-save jest-junit
+        steps {
+            script { echo "🧪 === TEST STAGE ===" }
 
-              echo "▶ Running Jest with JUnit + coverage"
-              JEST_JUNIT_OUTPUT="test-results.xml" \
-              npx jest tests --runInBand \
-                --reporters=default --reporters=jest-junit \
-                --coverage || true
+            catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+            sh """#!/usr/bin/env bash
+                set -euo pipefail
 
-              # Generate Cobertura if you have a transformer; otherwise skip silently
-              [ -f coverage/lcov.info ] || touch coverage/lcov.info
-            '''
-          }
-        }
-      }
-      post {
-        always {
-          script {
-            if (fileExists(env.BE_JUNIT)) {
-              junit allowEmptyResults: true, testResults: env.BE_JUNIT
-            } else {
-              echo "JUnit not found at ${env.BE_JUNIT}"
+                echo "▶ Start MongoDB on a RANDOM host port"
+                docker rm -f ci-mongo >/dev/null 2>&1 || true
+                docker run -d --name ci-mongo -P mongo:6 >/dev/null
+
+                # Read mapped host port for 27017/tcp
+                MONGO_PORT=\$(docker inspect -f '{{(index (index .NetworkSettings.Ports "27017/tcp") 0).HostPort}}' ci-mongo)
+                echo "Mongo is published on host port: \$MONGO_PORT"
+
+                echo "▶ Install backend deps"
+                pushd backend >/dev/null
+                npm ci
+                npm i --no-save jest-junit
+                popd >/dev/null
+
+                echo "▶ Start backend server in background (PORT=5000)"
+                export JWT_SECRET="ci-secret"
+                export NODE_ENV="test"
+                export PORT=5000
+                export MONGODB_URI="mongodb://127.0.0.1:\${MONGO_PORT}/devhub_ci"
+
+                node backend/src/server.js > backend/test-server.log 2>&1 & echo \$! > backend/test-server.pid
+
+                echo "▶ Wait for health endpoint"
+                for i in {1..40}; do
+                curl -sf http://127.0.0.1:5000/api/health && break || sleep 1
+                done
+
+                echo "▶ Run Jest (unit + integration) with JUnit + coverage"
+                pushd backend >/dev/null
+                JEST_JUNIT_OUTPUT="junit.xml" \
+                npx jest tests --runInBand \
+                    --reporters=default --reporters=jest-junit \
+                    --coverage || true
+                popd >/dev/null
+            """
             }
-
-            if (fileExists(env.BE_COBERTURA)) {
-              step([$class: 'CoberturaPublisher',
-                coberturaReportFile: env.BE_COBERTURA,
-                onlyStable: false, failNoReports: false,
-                autoUpdateHealth: false, autoUpdateStability: false])
-            } else {
-              echo "Cobertura not found at ${env.BE_COBERTURA} (ok)"
-            }
-          }
-          archiveArtifacts artifacts: 'backend/coverage/**/*', allowEmptyArchive: true
         }
-      }
+        post {
+            always {
+            script {
+                sh """#!/usr/bin/env bash
+                set -e
+                # Stop background server + remove mongo
+                if [ -f backend/test-server.pid ]; then kill \$(cat backend/test-server.pid) || true; fi
+                docker rm -f ci-mongo >/dev/null 2>&1 || true
+                """
+                if (fileExists(env.BE_JUNIT)) {
+                junit allowEmptyResults: true, testResults: env.BE_JUNIT
+                } else {
+                echo "JUnit not found at ${env.BE_JUNIT}"
+                }
+                if (fileExists(env.BE_COBERTURA)) {
+                step([$class: 'CoberturaPublisher',
+                    coberturaReportFile: env.BE_COBERTURA,
+                    onlyStable: false, failNoReports: false,
+                    autoUpdateHealth: false, autoUpdateStability: false])
+                } else {
+                echo "Cobertura not found at ${env.BE_COBERTURA} (ok)"
+                }
+            }
+            archiveArtifacts artifacts: 'backend/coverage/**/*', allowEmptyArchive: true
+            }
+        }
     }
+
 
     stage('Code Quality') {
       environment {
