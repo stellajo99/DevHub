@@ -11,7 +11,7 @@ pipeline {
   }
 
   stages {
-/*
+
     stage('Build') {
       steps {
         script {
@@ -76,7 +76,7 @@ pipeline {
           sh 'docker image prune -f || true'
         }
       }
-    } */
+    } 
 
     stage('Test') {
         environment {
