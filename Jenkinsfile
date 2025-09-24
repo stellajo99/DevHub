@@ -93,11 +93,20 @@ pipeline {
 
                 echo "▶ Start MongoDB on a RANDOM host port"
                 docker rm -f ci-mongo >/dev/null 2>&1 || true
-                docker run -d --name ci-mongo --network host mongo:6 >/dev/null
 
-                # With host networking, MongoDB is on the default port 27017
-                MONGO_PORT=27017
-                echo "Mongo is using host networking on port: \$MONGO_PORT"
+                # Use a random available port instead of host networking
+                # Try multiple approaches to get a random port
+                if command -v python3 >/dev/null 2>&1; then
+                  MONGO_PORT=\$(python3 -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()")
+                elif command -v python >/dev/null 2>&1; then
+                  MONGO_PORT=\$(python -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()")
+                else
+                  # Fallback to a high port range if Python is not available
+                  MONGO_PORT=\$((27000 + RANDOM % 1000))
+                  echo "⚠️ Python not available, using fallback port: \$MONGO_PORT"
+                fi
+                docker run -d --name ci-mongo -p \${MONGO_PORT}:27017 mongo:6 >/dev/null
+                echo "Mongo is using random port: \$MONGO_PORT"
 
                 echo "▶ Testing MongoDB connectivity"
                 echo "Waiting for MongoDB to be ready..."
@@ -112,19 +121,19 @@ pipeline {
                 done
 
                 echo "Testing host connectivity to MongoDB..."
-                if nc -z 127.0.0.1 \$MONGO_PORT; then
+                if command -v nc >/dev/null 2>&1 && nc -z 127.0.0.1 \$MONGO_PORT; then
                   echo "✅ Host can connect to MongoDB port \$MONGO_PORT"
                 else
-                  echo "❌ Cannot connect to MongoDB port \$MONGO_PORT from host"
+                  echo "⚠️ nc not available or cannot connect to MongoDB port \$MONGO_PORT from host"
                 fi
 
                 echo "Testing MongoDB with mongosh from host..."
-                if mongosh "mongodb://127.0.0.1:\$MONGO_PORT/test" --eval "db.adminCommand('ping')" --quiet; then
+                if command -v mongosh >/dev/null 2>&1 && mongosh "mongodb://127.0.0.1:\$MONGO_PORT/test" --eval "db.adminCommand('ping')" --quiet; then
                   echo "✅ Can connect to MongoDB with mongosh"
                 else
-                  echo "❌ Cannot connect to MongoDB with mongosh"
-                  echo "Trying to diagnose MongoDB connection..."
-                  docker logs ci-mongo --tail 20
+                  echo "⚠️ mongosh not available on host or cannot connect"
+                  echo "Checking if MongoDB container is responding..."
+                  docker logs ci-mongo --tail 10
                 fi
 
                 echo "▶ Install backend deps"
