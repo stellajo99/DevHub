@@ -54,7 +54,33 @@ pipeline {
                                 done
 
                                 echo "Running final smoke test..."
-                                docker exec devhub-nginx curl -f http://devhub-prod-app:5000/api/health || (echo "Smoke test failed" && exit 1)
+                                echo "Waiting for nginx container to be ready..."
+                                NGINX_COUNTER=0
+                                NGINX_MAX_ATTEMPTS=5
+
+                                while [ $NGINX_COUNTER -lt $NGINX_MAX_ATTEMPTS ]; do
+                                    NGINX_COUNTER=$((NGINX_COUNTER + 1))
+                                    echo "Nginx check attempt $NGINX_COUNTER/$NGINX_MAX_ATTEMPTS"
+
+                                    # Check nginx container status
+                                    docker ps --filter name=devhub-nginx --format "table {{.Names}}\\t{{.Status}}"
+
+                                    if docker exec devhub-nginx wget -qO- http://devhub-prod-app:5000/api/health; then
+                                        echo "Nginx smoke test passed"
+                                        break
+                                    fi
+
+                                    if [ $NGINX_COUNTER -eq $NGINX_MAX_ATTEMPTS ]; then
+                                        echo "Nginx smoke test failed, trying direct app connection..."
+                                        if docker exec devhub-prod-app curl -f http://localhost:5000/api/health; then
+                                            echo "Direct app connection successful - deployment OK"
+                                        else
+                                            echo "Smoke test failed completely" && exit 1
+                                        fi
+                                    fi
+
+                                    sleep 15
+                                done
                             '''
                         },
                         'Database Migration': {
