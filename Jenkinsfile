@@ -132,6 +132,12 @@ pipeline {
                     environment name: 'GIT_BRANCH', value: 'origin/master'
                 }
             }
+            environment {
+                AZURE_CLIENT_ID = credentials('AZURE_CLIENT_ID')
+                AZURE_CLIENT_SECRET = credentials('AZURE_CLIENT_SECRET')
+                AZURE_TENANT_ID = credentials('AZURE_TENANT_ID')
+                AZURE_SUBSCRIPTION_ID = credentials('AZURE_SUBSCRIPTION_ID')
+            }
             steps {
                 script {
                     echo "=== PRODUCTION RELEASE STAGE ==="
@@ -157,6 +163,42 @@ pipeline {
 
                         echo "Setting Azure subscription..."
                         az account set --subscription ${AZURE_SUBSCRIPTION_ID}
+
+                        echo "Checking and creating Azure resources if needed..."
+
+                        # Check and create resource group
+                        if ! az group show --name devhub-rg > /dev/null 2>&1; then
+                            echo "Creating resource group devhub-rg..."
+                            az group create --name devhub-rg --location eastus
+                        else
+                            echo "Resource group devhub-rg already exists"
+                        fi
+
+                        # Check and create container registry
+                        if ! az acr show --name devhubregistry --resource-group devhub-rg > /dev/null 2>&1; then
+                            echo "Creating container registry devhubregistry..."
+                            az acr create --resource-group devhub-rg --name devhubregistry --sku Basic --location eastus
+                        else
+                            echo "Container registry devhubregistry already exists"
+                        fi
+
+                        # Check and create App Service plan
+                        if ! az appservice plan show --name devhub-plan --resource-group devhub-rg > /dev/null 2>&1; then
+                            echo "Creating App Service plan devhub-plan..."
+                            az appservice plan create --name devhub-plan --resource-group devhub-rg --sku B1 --is-linux
+                        else
+                            echo "App Service plan devhub-plan already exists"
+                        fi
+
+                        # Check and create Web App
+                        if ! az webapp show --name devhub-app --resource-group devhub-rg > /dev/null 2>&1; then
+                            echo "Creating Web App devhub-app..."
+                            az webapp create --resource-group devhub-rg --plan devhub-plan --name devhub-app --deployment-container-image-name nginx
+                        else
+                            echo "Web App devhub-app already exists"
+                        fi
+
+                        echo "All Azure resources are ready"
 
                         echo "Pushing to Azure Container Registry..."
                         az acr login --name devhubregistry
