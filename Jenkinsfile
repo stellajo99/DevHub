@@ -180,7 +180,7 @@ pipeline {
               -Dsonar.organization='${SONAR_ORG}' \
               -Dsonar.sources=src \
               -Dsonar.host.url=https://sonarcloud.io \
-              -Dsonar.token='${SONAR_TOKEN}' \
+              -Dsonar.token=$SONAR_TOKEN \
               -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info || echo "Sonar finished with issues"
           """
         }

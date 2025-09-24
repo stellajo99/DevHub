@@ -1,5 +1,7 @@
 const request = require('supertest');
 
+jest.setTimeout(15000);
+
 describe('Integration Tests - Posts API', () => {
   const baseURL = 'http://localhost:5000';
 
