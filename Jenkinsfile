@@ -93,11 +93,11 @@ pipeline {
 
                 echo "▶ Start MongoDB on a RANDOM host port"
                 docker rm -f ci-mongo >/dev/null 2>&1 || true
-                docker run -d --name ci-mongo -P mongo:6 >/dev/null
+                docker run -d --name ci-mongo --network host mongo:6 >/dev/null
 
-                # Read mapped host port for 27017/tcp
-                MONGO_PORT=\$(docker inspect -f '{{(index (index .NetworkSettings.Ports "27017/tcp") 0).HostPort}}' ci-mongo)
-                echo "Mongo is published on host port: \$MONGO_PORT"
+                # With host networking, MongoDB is on the default port 27017
+                MONGO_PORT=27017
+                echo "Mongo is using host networking on port: \$MONGO_PORT"
 
                 echo "▶ Testing MongoDB connectivity"
                 echo "Waiting for MongoDB to be ready..."
