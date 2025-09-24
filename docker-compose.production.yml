@@ -231,11 +231,10 @@ services:
     container_name: devhub-nginx
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "3000:3000"
+      - "3000:80"
     volumes:
-    #  - ./nginx.production.conf:/etc/nginx/nginx.conf:ro
-      - ./logs:/var/log/nginx
+      - ${PWD}/nginx.production.conf:/etc/nginx/nginx.conf:ro
+      - ${PWD}/logs:/var/log/nginx
       - frontend-build:/usr/share/nginx/html
     networks:
       - prod-network
