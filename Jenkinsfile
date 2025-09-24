@@ -11,554 +11,161 @@ pipeline {
     }
 
     stages {
-
-
-
-        // Stage 5: DEPLOY
-        stage('Deploy') {
-            environment {
-                AZURE_CLIENT_ID = credentials('AZURE_CLIENT_ID')
-                AZURE_CLIENT_SECRET = credentials('AZURE_CLIENT_SECRET') 
-                AZURE_TENANT_ID = credentials('AZURE_TENANT_ID')
-                AZURE_SUBSCRIPTION_ID = credentials('AZURE_SUBSCRIPTION_ID')
-            }
+                // Stage 1: BUILD
+        stage('Build') {
             steps {
                 script {
-                    parallel(
-                        'Deploy to Staging': {
-                            echo "=== STAGING DEPLOYMENT ==="
-                            sh '''
-                                echo "Stopping existing staging services..."
-                                docker compose -f docker-compose.production.yml down || echo "No existing services to stop"
+                    echo "=== BUILD STAGE ==="
 
-                                echo "Starting staging deployment..."
-                                docker compose -f docker-compose.production.yml up -d
+                    // Install dependencies and build
+                    sh '''
+                        echo "Installing root dependencies..."
+                        npm install
 
-                                echo "Waiting for services to start..."
-                                sleep 60
+                        echo "Building frontend..."
+                        cd frontend
+                        npm install
+                        npm run build
 
-                                echo "Running health checks..."
-                                COUNTER=0
-                                MAX_ATTEMPTS=10
+                        echo "Building backend..."
+                        cd ../backend
+                        npm install
+                        npm run build
 
-                                while [ $COUNTER -lt $MAX_ATTEMPTS ]; do
-                                    COUNTER=$((COUNTER + 1))
-                                    echo "Health check attempt $COUNTER/$MAX_ATTEMPTS"
-
-                                    # Check if app container is running and healthy
-                                    if docker exec devhub-prod-app curl -f http://localhost:5000/api/health; then
-                                        echo "Health check passed"
-                                        break
-                                    fi
-
-                                    if [ $COUNTER -eq $MAX_ATTEMPTS ]; then
-                                        echo "All health checks failed"
-                                        exit 1
-                                    fi
-
-                                    sleep 10
-                                done
-
-                                echo "Running final smoke test..."
-                                echo "Waiting for nginx container to be ready..."
-                                NGINX_COUNTER=0
-                                NGINX_MAX_ATTEMPTS=3
-
-                                while [ $NGINX_COUNTER -lt $NGINX_MAX_ATTEMPTS ]; do
-                                    NGINX_COUNTER=$((NGINX_COUNTER + 1))
-                                    echo "Nginx check attempt $NGINX_COUNTER/$NGINX_MAX_ATTEMPTS"
-
-                                    # Check nginx container status
-                                    docker ps --filter name=devhub-nginx --format "table {{.Names}}\\t{{.Status}}"
-
-                                    if docker exec devhub-nginx wget -qO- http://devhub-prod-app:5000/api/health; then
-                                        echo "Nginx smoke test passed"
-                                        break
-                                    fi
-
-                                    if [ $NGINX_COUNTER -eq $NGINX_MAX_ATTEMPTS ]; then
-                                        echo "Nginx smoke test failed, trying direct app connection..."
-                                        if docker exec devhub-prod-app curl -f http://localhost:5000/api/health; then
-                                            echo "Direct app connection successful - deployment OK"
-                                        else
-                                            echo "Smoke test failed completely" && exit 1
-                                        fi
-                                    fi
-
-                                    sleep 15
-                                done
-                            '''
-                        },
-                        'Database Migration': {
-                            echo "=== DATABASE MIGRATION ==="
-                            sh '''
-                                echo "Running database migrations..."
-                                cd backend
-                                npm run migrate:up || echo "No migrations to run"
-
-                                echo "Seeding test data..."
-                                npm run seed:staging || echo "No seeding required"
-                            '''
-                        }
-                    )
+                        echo "Building Docker image..."
+                        cd ..
+                        docker build -f Dockerfile.production -t ${DOCKER_IMAGE}:${BUILD_NUMBER} .
+                        docker tag ${DOCKER_IMAGE}:${BUILD_NUMBER} ${DOCKER_IMAGE}:latest
+                    '''
                 }
             }
             post {
                 success {
-                    echo "Staging deployment successful"
-                    script {
-                        sh 'echo "Deployment to staging completed successfully at $(date)"'
-                    }
+                    // Archive build artifacts
+                    archiveArtifacts artifacts: 'frontend/build/**/*', allowEmptyArchive: true
+                    archiveArtifacts artifacts: 'backend/dist/**/*', allowEmptyArchive: true, fingerprint: true
                 }
-                failure {
-                    echo "Staging deployment failed"
-                    script {
-                        sh '''
-                            echo "Collecting deployment logs..."
-                            docker compose -f docker-compose.production.yml logs > deployment-error.log 2>&1 || echo "Could not collect logs"
+            }
+        }
+
+        // Stage 2: TEST
+        stage('Test') {
+            environment {
+                BE_JUNIT = 'backend/test-results.xml'
+                BE_COBERTURA = 'backend/coverage/cobertura-coverage.xml'
+            }
+            steps {
+                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                    dir('backend') {
+                        sh '''#!/usr/bin/env bash
+                        set -e
+
+                        echo ">>> Installing backend dependencies"
+                        npm ci
+
+                        echo ">>> Install jest-junit reporter"
+                        npm install --no-save jest-junit
+
+                        echo ">>> Run tests from ./tests folder with JUnit + coverage"
+                        JEST_JUNIT_OUTPUT="test-results.xml" \
+                        npx jest tests --runInBand \
+                            --reporters=default --reporters=jest-junit \
+                            --coverage || true
                         '''
                     }
-                    archiveArtifacts artifacts: 'deployment-error.log', allowEmptyArchive: true
+                }
+            }
+            post {
+                always {
+                    script {
+                        if (fileExists(env.BE_JUNIT)) {
+                            junit allowEmptyResults: true, testResults: env.BE_JUNIT
+                        } else {
+                            echo "JUnit report not found: ${env.BE_JUNIT}"
+                        }
+                    }
+                    script {
+                        if (fileExists(env.BE_COBERTURA)) {
+                            step([$class: 'CoberturaPublisher',
+                                coberturaReportFile: env.BE_COBERTURA,
+                                onlyStable: false, failNoReports: false,
+                                autoUpdateHealth: false, autoUpdateStability: false])
+                        } else {
+                            echo "Coverage report not found: ${env.BE_COBERTURA}"
+                        }
+                    }
+                    archiveArtifacts artifacts: 'backend/coverage/**/*', allowEmptyArchive: true
+                }
+            }
+        }
+
+        // Stage 3: CODE QUALITY 
+        stage('Code Quality') {
+            environment {
+                SONAR_TOKEN = credentials('SONAR_TOKEN')
+            }
+            steps {
+                script {
+                    sh '''
+                        echo "=== SONARCLOUD ANALYSIS ==="
+                        cd backend
+                        
+                        # Install sonar-scanner via npm
+                        echo "Installing SonarScanner..."
+                        npm install -g sonar-scanner
+                        
+                        # Run SonarCloud analysis
+                        echo "Running SonarCloud analysis..."
+                        sonar-scanner \
+                            -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                            -Dsonar.organization=stellajo99 \
+                            -Dsonar.sources=src \
+                            -Dsonar.host.url=https://sonarcloud.io \
+                            -Dsonar.token=${SONAR_TOKEN} \
+                            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info || echo "SonarCloud analysis completed with issues"
+    
+                    '''
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'backend/eslint-results.json,backend/npm-audit.json', allowEmptyArchive: true
+                }
+            }
+        }
+
+        // Stage 4: SECURITY
+        stage('Security scan') {
+            environment {
+                SNYK_TOKEN = credentials('SNYK_TOKEN')
+            }
+            steps {
+                script {
+                    sh '''
+                        echo "=== SNYK SECURITY SCAN ==="
+                        cd backend
+                        
+                        # Install Snyk CLI
+                        npm install -g snyk
+                        
+                        # Authenticate with Snyk
+                        snyk auth $SNYK_TOKEN
+                        
+                        # Run vulnerability test
+                        echo "Running Snyk security scan..."
+                        snyk test --severity-threshold=high || echo "Security vulnerabilities found but continuing..."
+                        
+                        # Optional: Generate JSON report
+                        snyk test --json > snyk-report.json || true
+
+                    '''
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'backend/snyk-report.json', allowEmptyArchive: true
                 }
             }
         } 
-
-        // Stage 6: RELEASE
-        stage('Release') {
-            when {
-                anyOf {
-                    branch 'master'
-                    branch 'origin/master'
-                    environment name: 'GIT_BRANCH', value: 'origin/master'
-                }
-            }
-            environment {
-                AZURE_CLIENT_ID = credentials('AZURE_CLIENT_ID')
-                AZURE_CLIENT_SECRET = credentials('AZURE_CLIENT_SECRET')
-                AZURE_TENANT_ID = credentials('AZURE_TENANT_ID')
-                AZURE_SUBSCRIPTION_ID = credentials('AZURE_SUBSCRIPTION_ID')
-            }
-            steps {
-                script {
-                    echo "=== PRODUCTION RELEASE STAGE ==="
-                    
-                    // Install Azure CLI if not available
-                    sh '''
-                        if ! which az > /dev/null 2>&1; then
-                            echo "Installing Azure CLI..."
-                            curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-                            echo "Azure CLI installed successfully"
-                        else
-                            echo "Azure CLI already installed"
-                            az --version
-                        fi
-                    '''
-
-                    sh '''
-                        echo "Logging into Azure..."
-                        az login --service-principal \
-                            --username ${AZURE_CLIENT_ID} \
-                            --password ${AZURE_CLIENT_SECRET} \
-                            --tenant ${AZURE_TENANT_ID}
-
-                        echo "Setting Azure subscription..."
-                        az account set --subscription ${AZURE_SUBSCRIPTION_ID}
-
-                        echo "Checking and creating Azure resources if needed..."
-
-                        # Check and create resource group
-                        if ! az group show --name devhub-rg > /dev/null 2>&1; then
-                            echo "Creating resource group devhub-rg..."
-                            az group create --name devhub-rg --location eastus
-                        else
-                            echo "Resource group devhub-rg already exists"
-                        fi
-
-                        # Check and create container registry
-                        if ! az acr show --name devhubregistry --resource-group devhub-rg > /dev/null 2>&1; then
-                            echo "Creating container registry devhubregistry..."
-                            az acr create --resource-group devhub-rg --name devhubregistry --sku Basic --location eastus
-                        else
-                            echo "Container registry devhubregistry already exists"
-                        fi
-
-                        # Check and create Cosmos DB (MongoDB API)
-                        if ! az cosmosdb show --name devhub-cosmos --resource-group devhub-rg > /dev/null 2>&1; then
-                            echo "Creating Cosmos DB with MongoDB API..."
-                            az cosmosdb create --name devhub-cosmos --resource-group devhub-rg --kind MongoDB --locations regionName=westus2 --default-consistency-level Session
-                            echo "Cosmos DB created successfully"
-                        else
-                            echo "Cosmos DB devhub-cosmos already exists"
-                        fi
-
-                        # Get Cosmos DB connection string
-                        COSMOS_CONNECTION_STRING=$(az cosmosdb keys list --name devhub-cosmos --resource-group devhub-rg --type connection-strings --query connectionStrings[0].connectionString -o tsv)
-                        echo "Retrieved Cosmos DB connection string"
-
-                        echo "Pushing to Azure Container Registry..."
-                        az acr login --name devhubregistry
-                        docker tag ${DOCKER_IMAGE}:latest devhubregistry.azurecr.io/${DOCKER_IMAGE}:${BUILD_NUMBER}
-                        docker tag ${DOCKER_IMAGE}:latest devhubregistry.azurecr.io/${DOCKER_IMAGE}:latest
-                        docker push devhubregistry.azurecr.io/${DOCKER_IMAGE}:${BUILD_NUMBER}
-                        docker push devhubregistry.azurecr.io/${DOCKER_IMAGE}:latest
-
-                        # Stop existing container if it exists
-                        echo "Checking for existing container instance..."
-                        if az container show --name devhub-container-debug --resource-group devhub-rg > /dev/null 2>&1; then
-                            echo "Stopping existing container instance..."
-                            az container delete --name devhub-container-debug --resource-group devhub-rg --yes
-                            echo "Waiting for container deletion..."
-                            sleep 30
-                        fi
-
-                        echo "Enabling admin access for Container Registry..."
-                        az acr update -n devhubregistry --admin-enabled true
-
-                        echo "Deploying to Azure Container Instances..."
-                        REGISTRY_USERNAME=$(az acr credential show --name devhubregistry --query username -o tsv)
-                        REGISTRY_PASSWORD=$(az acr credential show --name devhubregistry --query passwords[0].value -o tsv)
-
-                        az container create \
-                            --resource-group devhub-rg \
-                            --name devhub-container-debug \
-                            --image devhubregistry.azurecr.io/devhub:${BUILD_NUMBER} \
-                            --registry-login-server devhubregistry.azurecr.io \
-                            --registry-username $REGISTRY_USERNAME \
-                            --registry-password $REGISTRY_PASSWORD \
-                            --dns-name-label devhub-app-debug-${BUILD_NUMBER} \
-                            --ports 3000 \
-                            --cpu 1 \
-                            --memory 1 \
-                            --location eastus \
-                            --os-type Linux \
-                            --restart-policy Never \
-                            --environment-variables \
-                                NODE_ENV=production \
-                                PORT=3000 \
-                                MONGODB_URI="$COSMOS_CONNECTION_STRING" \
-                                JWT_SECRET="debug-secret-key-${BUILD_NUMBER}"
-
-                        echo "Waiting for container to be ready..."
-                        sleep 60
-
-                        echo "=== Container Logs ==="
-                        az container logs --name devhub-container-debug --resource-group devhub-rg
-
-                        # Get the container URL
-                        CONTAINER_URL=$(az container show --name devhub-container-debug --resource-group devhub-rg --query ipAddress.fqdn -o tsv)
-                        echo "Container deployed at: http://$CONTAINER_URL:3000"
-
-                        echo "Running production health check..."
-                        COUNTER=0
-                        MAX_ATTEMPTS=7
-                        
-                        while [ $COUNTER -lt $MAX_ATTEMPTS ]; do
-                            COUNTER=$((COUNTER + 1))
-                            echo "Health check attempt $COUNTER/$MAX_ATTEMPTS"
-                            
-                            if curl -f http://$CONTAINER_URL:3000/api/health; then
-                                echo "Production health check passed"
-                                echo "Application is available at: http://$CONTAINER_URL:3000"
-                                break
-                            fi
-                            
-                            if [ $COUNTER -eq $MAX_ATTEMPTS ]; then
-                                echo "Production health checks failed"
-                                exit 1
-                            fi
-                            
-                            sleep 15
-                        done
-                    '''
-
-                    // Tag the successful release
-                    sh '''
-                        echo "Tagging successful release..."
-                        git tag -a v${BUILD_NUMBER} -m "Release v${BUILD_NUMBER} - ${BUILD_TIMESTAMP}"
-                        git push origin v${BUILD_NUMBER} || echo "Could not push tag"
-                    '''
-                }
-            }
-            post {
-                success {
-                    echo "Production release successful"
-                    script {
-                        def containerUrl = sh(script: "az container show --name devhub-container-debug --resource-group devhub-rg --query ipAddress.fqdn -o tsv", returnStdout: true).trim()
-                        emailext (
-                            subject: "Production Release v${BUILD_NUMBER} Deployed Successfully",
-                            body: """
-                            Production release v${BUILD_NUMBER} has been deployed successfully.
-
-                            Application URL: http://${containerUrl}:3000
-                            Build Details: ${BUILD_URL}
-                            Deployed at: ${BUILD_TIMESTAMP}
-
-                            Please verify the deployment and monitor for any issues.
-                            """,
-                            to: "${JENKINS_EMAIL}"
-                        )
-                    }
-                }
-                failure {
-                    echo "Production release failed"
-                    sh '''
-                        echo "Cleaning up failed deployment..."
-                        az container delete --name devhub-container-debug --resource-group devhub-rg --yes || echo "Cleanup failed"
-                    '''
-                    emailext (
-                        subject: "URGENT: Production Release v${BUILD_NUMBER} Failed",
-                        body: "Production release v${BUILD_NUMBER} failed. Failed container instance has been cleaned up. Please investigate immediately.",
-                        to: "${JENKINS_EMAIL}"
-                    )
-                }
-            }
-        }
-
-        // Stage 7: MONITORING & ALERTING
-        stage('Monitoring & Alerting') {
-            parallel {
-                stage('Setup Monitoring Stack') {
-                    steps {
-                        script {
-                            echo "=== MONITORING SETUP ==="
-                            sh '''
-                                echo "Starting monitoring stack..."
-                                cd monitoring
-                                docker-compose up -d prometheus grafana alertmanager node-exporter
-
-                                echo "Waiting for monitoring services..."
-                                sleep 60
-
-                                echo "Configuring Prometheus targets..."
-                                docker exec devhub-prod-prometheus wget -qO- http://localhost:9090/api/v1/targets && echo "Prometheus is running" || echo "Prometheus setup failed"
-
-                                echo "Setting up Grafana dashboards..."
-                                docker exec devhub-prod-grafana curl -f http://localhost:3000 && echo "Grafana is accessible" || echo "Grafana setup failed"
-                            '''
-                        }
-                    }
-                }
-                stage('Application Health Monitoring') {
-                    steps {
-                        script {
-                            echo "=== APPLICATION HEALTH MONITORING ==="
-                            sh '''
-                                echo "Setting up health checks..."
-
-                                echo "Checking application endpoints..."
-                                endpoints="/api/health /api/status /"
-                                for endpoint in $endpoints; do
-                                    if docker exec devhub-nginx curl -f http://devhub-prod-app:5000$endpoint; then
-                                        echo "✅ $endpoint - OK"
-                                    else
-                                        echo "❌ $endpoint - FAILED"
-                                    fi
-                                done
-
-                                echo "Setting up uptime monitoring..."
-                                cat > uptime-monitor.sh << 'EOF'
-#!/bin/bash
-while true; do
-    if docker exec devhub-nginx curl -f http://devhub-prod-app:5000/api/health; then
-        echo "[$(date)] Health check passed"
-    else
-        echo "[$(date)] Health check failed"
-    fi
-    sleep 300  # Check every 5 minutes
-done
-EOF
-                                chmod +x uptime-monitor.sh
-                                echo "Uptime monitoring script created"
-                            '''
-                        }
-                    }
-                }
-                stage('Performance Monitoring') {
-                    steps {
-                        script {
-                            echo "=== PERFORMANCE MONITORING ==="
-                            sh '''
-                                echo "Setting up performance monitoring..."
-
-                                echo "Docker container metrics..."
-                                docker stats --no-stream --format "table {{.Container}}\\t{{.CPUPerc}}\\t{{.MemUsage}}\\t{{.NetIO}}"
-
-                                echo "Application performance tests..."
-                                echo "Running performance baseline tests..."
-                                start_time=$(date +%s%3N)
-                                if docker exec devhub-nginx curl -f http://devhub-prod-app:5000/api/health; then
-                                    end_time=$(date +%s%3N)
-                                    response_time=$((end_time - start_time))
-                                    echo "Response time: ${response_time}ms"
-                                    if [ $response_time -gt 2000 ]; then
-                                        echo "WARNING: Slow response time detected!"
-                                    fi
-                                else
-                                    echo "Performance test failed"
-                                fi
-                            '''
-                        }
-                    }
-                }
-                stage('Setup Alerting') {
-                    steps {
-                        script {
-                            echo "=== ALERTING SETUP ==="
-                            sh '''
-                                echo "Configuring alerting rules..."
-
-                                echo "Testing alert webhook endpoints..."
-                                # Test Slack webhook (if configured)
-                                if [ -n "$SLACK_WEBHOOK_URL" ]; then
-                                    curl -X POST -H 'Content-type: application/json' \
-                                        --data '{"text":"DevHub CI/CD Pipeline - Alert Test","channel":"#devops"}' \
-                                        $SLACK_WEBHOOK_URL && echo "Slack webhook test completed" || echo "Slack webhook test failed"
-                                else
-                                    echo "Slack webhook not configured"
-                                fi
-
-                                echo "Setting up email alerts..."
-                                echo "Email alerting configured through Jenkins"
-
-                                echo "Creating monitoring dashboard URLs..."
-                                echo "📊 Grafana Dashboard: http://localhost:13000"
-                                echo "📈 Prometheus Metrics: http://localhost:19090"
-                                echo "🔔 AlertManager: http://localhost:19093"
-                            '''
-                        }
-                    }
-                }
-            }
-            post {
-                success {
-                    echo "✅ Monitoring and alerting setup completed successfully!"
-                    script {
-                        // Send success notification
-                        emailext (
-                            subject: "🔍 Monitoring Setup Complete - DevHub v${BUILD_NUMBER}",
-                            body: """
-                            Monitoring and alerting has been successfully configured for DevHub v${BUILD_NUMBER}.
-
-                            📊 Monitoring Resources:
-                            • Grafana Dashboard: http://localhost:13000
-                            • Prometheus Metrics: http://localhost:19090
-                            • AlertManager: http://localhost:19093
-
-                            🔍 Health Check URLs:
-                            • Application Health: http://localhost:8081/api/health
-                            • Production URL: https://devhub-app.azurewebsites.net
-
-                            The system is now being monitored for:
-                            ✓ Application uptime and health
-                            ✓ Performance metrics and response times
-                            ✓ Resource utilization (CPU, Memory, Network)
-                            ✓ Error rates and exceptions
-
-                            Alerts will be sent to this email for any critical issues.
-                            """,
-                            to: "${JENKINS_EMAIL}"
-                        )
-                    }
-                }
-                failure {
-                    echo "❌ Monitoring setup failed!"
-                    emailext (
-                        subject: "🚨 Monitoring Setup Failed - DevHub v${BUILD_NUMBER}",
-                        body: "Monitoring and alerting setup failed for DevHub v${BUILD_NUMBER}. Please check the build logs and configure monitoring manually.",
-                        to: "${JENKINS_EMAIL}"
-                    )
-                }
-            }
-        }
-    }
-
-    post {
-        always {
-            script {
-                try {
-                    // Archive final build summary
-                    def buildTimestamp = new Date().format('yyyy-MM-dd-HH-mm-ss')
-                    def buildSummary = """
-Build Summary for DevHub v${BUILD_NUMBER}
-==========================================
-Build Timestamp: ${buildTimestamp}
-Build Status: ${currentBuild.result ?: 'SUCCESS'}
-Build Duration: ${currentBuild.durationString}
-Git Commit: ${env.GIT_COMMIT ?: 'N/A'}
-Branch: ${env.BRANCH_NAME ?: 'master'}
-
-Stages Completed:
-✓ Build - Created artifacts and Docker image
-✓ Test - Frontend, Backend, and Integration tests
-✓ Code Quality - SonarQube analysis and ESLint
-✓ Security - Vulnerability scanning and SAST
-✓ Deploy - Staging environment deployment
-✓ Release - Production deployment with blue-green
-✓ Monitoring - Health checks and alerting setup
-
-Artifacts Generated:
-• Docker Image: ${env.DOCKER_IMAGE ?: 'devhub'}:${BUILD_NUMBER}
-• Frontend Build: frontend/build/
-• Test Coverage Reports: */coverage/
-• Security Reports: *-security.json
-• Quality Reports: *-eslint.json
-"""
-                    writeFile file: 'build-summary.txt', text: buildSummary
-                    archiveArtifacts artifacts: 'build-summary.txt', allowEmptyArchive: true
-                } catch (Exception e) {
-                    echo "Failed to create build summary: ${e.getMessage()}"
-                }
-            }
-            echo "🧹 Cleaning workspace..."
-        }
-        success {
-            echo "🎉 Pipeline completed successfully!"
-            script {
-                echo "✅ DevHub v${BUILD_NUMBER} pipeline completed successfully at ${new Date()}"
-            }
-        }
-        failure {
-            echo "💥 Pipeline failed!"
-            script {
-                echo "❌ DevHub v${BUILD_NUMBER} pipeline failed at ${new Date()}"
-
-                // Send failure notification
-                try {
-                    def jenkinsEmail = env.JENKINS_EMAIL ?: 'devops@company.com'
-                    emailext (
-                        subject: "🚨 CI/CD Pipeline Failed - DevHub v${BUILD_NUMBER}",
-                        body: """
-                        The CI/CD pipeline for DevHub v${BUILD_NUMBER} has failed.
-
-                        Build Details:
-                        • Build URL: ${BUILD_URL}
-                        • Branch: ${env.BRANCH_NAME ?: 'master'}
-                        • Commit: ${env.GIT_COMMIT ?: 'N/A'}
-                        • Failed Stage: Check build logs for details
-
-                        Please investigate the failure and re-run the pipeline once issues are resolved.
-                        """,
-                        to: jenkinsEmail
-                    )
-                } catch (Exception e) {
-                    echo "Failed to send failure email: ${e.getMessage()}"
-                }
-            }
-        }
-        unstable {
-            echo "⚠️ Pipeline completed with warnings!"
-            script {
-                try {
-                    def jenkinsEmail = env.JENKINS_EMAIL ?: 'devops@company.com'
-                    emailext (
-                        subject: "⚠️ CI/CD Pipeline Unstable - DevHub v${BUILD_NUMBER}",
-                        body: "The CI/CD pipeline for DevHub v${BUILD_NUMBER} completed but with warnings. Please review the build logs.",
-                        to: jenkinsEmail
-                    )
-                } catch (Exception e) {
-                    echo "Failed to send unstable email: ${e.getMessage()}"
-                }
-            }
-        }
     }
 }
