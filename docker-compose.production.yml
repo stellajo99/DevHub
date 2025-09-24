@@ -206,14 +206,14 @@ services:
     container_name: devhub-alertmanager
     restart: unless-stopped
     ports:
-      - "9093:9093"
+      - "19093:9093"
     volumes:
       - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - prod_alertmanager_data:/alertmanager
     command:
       - '--config.file=/etc/alertmanager/alertmanager.yml'
       - '--storage.path=/alertmanager'
-      - '--web.external-url=http://localhost:9093'
+      - '--web.external-url=http://localhost:19093'
     networks:
       - prod-network
     depends_on:
@@ -230,7 +230,7 @@ services:
     container_name: devhub-nginx
     restart: unless-stopped
     ports:
-      - "3000:80"
+      - "8080:80"
     volumes:
       - ./:/app:ro
       - ./logs:/var/log/nginx
