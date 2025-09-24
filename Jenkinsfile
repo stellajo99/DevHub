@@ -91,24 +91,21 @@ pipeline {
             set -e
             echo "▶ Start MongoDB on a RANDOM host port"
             docker rm -f devhub-ci-mongo >/dev/null 2>&1 || true
-            CID=$(docker run -d --name devhub-ci-mongo -p 0:27017 mongo:7 --quiet)
-   
+            docker run -d --name devhub-ci-mongo -p 0:27017 mongo:7 --quiet
+
             HOST_PORT=$(docker port devhub-ci-mongo 27017/tcp | awk -F: '{print $2}')
             echo "Mongo is using random port: ${HOST_PORT}"
 
-            echo "▶ Testing MongoDB connectivity from Jenkins container"
-          
+            echo "▶ Tools"
             (command -v nc >/dev/null) || (apt-get update && apt-get install -y netcat-openbsd >/dev/null)
-            (command -v mongosh >/dev/null) || (apt-get update && apt-get install -y mongodb-mongosh >/dev/null)
 
-        
             DB_HOST=host.docker.internal
-         
             if ! ping -c1 -W1 ${DB_HOST} >/dev/null 2>&1; then
-              DB_HOST=$(ip route | awk "/default/ {print \$3}" | head -n1)
+              DB_HOST=$(ip route | awk '/default/ {print $3}' | head -n1)
             fi
+            echo "DB_HOST=${DB_HOST}"
 
-            echo "▶ Wait Mongo up..."
+            echo "▶ Wait Mongo up (host connectivity)"
             for i in $(seq 1 30); do
               if nc -z ${DB_HOST} ${HOST_PORT}; then
                 echo "✅ Mongo reachable at ${DB_HOST}:${HOST_PORT}"
@@ -118,8 +115,8 @@ pipeline {
               sleep 1
             done
 
-            echo "▶ Smoke test with mongosh"
-            mongosh "mongodb://${DB_HOST}:${HOST_PORT}/admin" --eval "db.runCommand({ ping: 1 })" --quiet
+            echo "▶ Smoke test with mongosh (inside container)"
+            docker exec devhub-ci-mongo mongosh --eval "db.runCommand({ ping: 1 })" --quiet
 
             echo "▶ Install backend deps"
             cd backend
@@ -135,7 +132,6 @@ pipeline {
             echo "Server started with PID: ${SRV_PID}"
 
             echo "▶ Wait for health endpoint and database connection"
-       
             for i in $(seq 1 60); do
               RES=$(curl -s "http://127.0.0.1:${PORT}/api/health" || true)
               echo "Health: $RES"
@@ -148,13 +144,12 @@ pipeline {
             npm test -- --runInBand || EXIT_CODE=$?
             cd ..
 
-            echo "▶ Stop backend"
+            echo "▶ Stop backend & teardown Mongo"
             kill ${SRV_PID} 2>/dev/null || true
-
-            echo "▶ Teardown Mongo"
             docker rm -f devhub-ci-mongo >/dev/null 2>&1 || true
 
             exit ${EXIT_CODE:-0}
+
           '''
         }
       }
