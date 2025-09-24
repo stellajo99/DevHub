@@ -62,7 +62,7 @@ pipeline {
                                 echo "Running final smoke test..."
                                 echo "Waiting for nginx container to be ready..."
                                 NGINX_COUNTER=0
-                                NGINX_MAX_ATTEMPTS=5
+                                NGINX_MAX_ATTEMPTS=3
 
                                 while [ $NGINX_COUNTER -lt $NGINX_MAX_ATTEMPTS ]; do
                                     NGINX_COUNTER=$((NGINX_COUNTER + 1))
@@ -182,24 +182,6 @@ pipeline {
                             echo "Container registry devhubregistry already exists"
                         fi
 
-                        # Check and create App Service plan
-                        if ! az appservice plan show --name devhub-plan --resource-group devhub-rg > /dev/null 2>&1; then
-                            echo "Creating App Service plan devhub-plan..."
-                            az appservice plan create --name devhub-plan --resource-group devhub-rg --sku F1 --is-linux
-                        else
-                            echo "App Service plan devhub-plan already exists"
-                        fi
-
-                        # Check and create Web App
-                        if ! az webapp show --name devhub-app --resource-group devhub-rg > /dev/null 2>&1; then
-                            echo "Creating Web App devhub-app..."
-                            az webapp create --resource-group devhub-rg --plan devhub-plan --name devhub-app --deployment-container-image-name nginx
-                        else
-                            echo "Web App devhub-app already exists"
-                        fi
-
-                        echo "All Azure resources are ready"
-
                         echo "Pushing to Azure Container Registry..."
                         az acr login --name devhubregistry
                         docker tag ${DOCKER_IMAGE}:${BUILD_NUMBER} devhubregistry.azurecr.io/${DOCKER_IMAGE}:${BUILD_NUMBER}
@@ -207,22 +189,35 @@ pipeline {
                         docker push devhubregistry.azurecr.io/${DOCKER_IMAGE}:${BUILD_NUMBER}
                         docker push devhubregistry.azurecr.io/${DOCKER_IMAGE}:latest
 
-                        echo "Creating deployment slot for blue-green deployment..."
-                        az webapp deployment slot create \
-                            --name devhub-app \
-                            --resource-group devhub-rg \
-                            --slot staging \
-                            --configuration-source devhub-app || echo "Slot already exists"
+                        # Stop existing container if it exists
+                        echo "Checking for existing container instance..."
+                        if az container show --name devhub-container --resource-group devhub-rg > /dev/null 2>&1; then
+                            echo "Stopping existing container instance..."
+                            az container delete --name devhub-container --resource-group devhub-rg --yes
+                            echo "Waiting for container deletion..."
+                            sleep 30
+                        fi
 
-                        echo "Deploying to staging slot..."
-                        az webapp config container set \
-                            --name devhub-app \
+                        echo "Deploying to Azure Container Instances..."
+                        az container create \
                             --resource-group devhub-rg \
-                            --slot staging \
-                            --docker-custom-image-name devhubregistry.azurecr.io/${DOCKER_IMAGE}:${BUILD_NUMBER}
+                            --name devhub-container \
+                            --image devhubregistry.azurecr.io/${DOCKER_IMAGE}:${BUILD_NUMBER} \
+                            --registry-login-server devhubregistry.azurecr.io \
+                            --registry-username $(az acr credential show --name devhubregistry --query username -o tsv) \
+                            --registry-password $(az acr credential show --name devhubregistry --query passwords[0].value -o tsv) \
+                            --dns-name-label devhub-app-${BUILD_NUMBER} \
+                            --ports 3000 \
+                            --cpu 1 \
+                            --memory 1 \
+                            --location eastus
 
-                        echo "Waiting for staging slot to be ready..."
-                        sleep 120
+                        echo "Waiting for container to be ready..."
+                        sleep 60
+
+                        # Get the container URL
+                        CONTAINER_URL=$(az container show --name devhub-container --resource-group devhub-rg --query ipAddress.fqdn -o tsv)
+                        echo "Container deployed at: http://$CONTAINER_URL:3000"
 
                         echo "Running production health check..."
                         COUNTER=0
@@ -232,8 +227,9 @@ pipeline {
                             COUNTER=$((COUNTER + 1))
                             echo "Health check attempt $COUNTER/$MAX_ATTEMPTS"
                             
-                            if curl -f https://devhub-app-staging.azurewebsites.net/api/health; then
+                            if curl -f http://$CONTAINER_URL:3000/health; then
                                 echo "Production health check passed"
+                                echo "Application is available at: http://$CONTAINER_URL:3000"
                                 break
                             fi
                             
@@ -244,16 +240,6 @@ pipeline {
                             
                             sleep 15
                         done
-
-                        echo "Swapping staging to production..."
-                        az webapp deployment slot swap \
-                            --name devhub-app \
-                            --resource-group devhub-rg \
-                            --slot staging \
-                            --target-slot production
-
-                        echo "Final production health check..."
-                        curl -f https://devhub-app.azurewebsites.net/api/health || (echo "Production health check failed" && exit 1)
                     '''
 
                     // Tag the successful release
@@ -267,33 +253,32 @@ pipeline {
             post {
                 success {
                     echo "Production release successful"
-                    emailext (
-                        subject: "Production Release v${BUILD_NUMBER} Deployed Successfully",
-                        body: """
-                        Production release v${BUILD_NUMBER} has been deployed successfully.
+                    script {
+                        def containerUrl = sh(script: "az container show --name devhub-container --resource-group devhub-rg --query ipAddress.fqdn -o tsv", returnStdout: true).trim()
+                        emailext (
+                            subject: "Production Release v${BUILD_NUMBER} Deployed Successfully",
+                            body: """
+                            Production release v${BUILD_NUMBER} has been deployed successfully.
 
-                        Application URL: https://devhub-app.azurewebsites.net
-                        Build Details: ${BUILD_URL}
-                        Deployed at: ${BUILD_TIMESTAMP}
+                            Application URL: http://${containerUrl}:3000
+                            Build Details: ${BUILD_URL}
+                            Deployed at: ${BUILD_TIMESTAMP}
 
-                        Please verify the deployment and monitor for any issues.
-                        """,
-                        to: "${JENKINS_EMAIL}"
-                    )
+                            Please verify the deployment and monitor for any issues.
+                            """,
+                            to: "${JENKINS_EMAIL}"
+                        )
+                    }
                 }
                 failure {
                     echo "Production release failed"
                     sh '''
-                        echo "Rolling back production deployment..."
-                        az webapp deployment slot swap \
-                            --name devhub-app \
-                            --resource-group devhub-rg \
-                            --slot production \
-                            --target-slot staging || echo "Rollback failed"
+                        echo "Cleaning up failed deployment..."
+                        az container delete --name devhub-container --resource-group devhub-rg --yes || echo "Cleanup failed"
                     '''
                     emailext (
                         subject: "URGENT: Production Release v${BUILD_NUMBER} Failed",
-                        body: "Production release v${BUILD_NUMBER} failed. Automatic rollback attempted. Please investigate immediately.",
+                        body: "Production release v${BUILD_NUMBER} failed. Failed container instance has been cleaned up. Please investigate immediately.",
                         to: "${JENKINS_EMAIL}"
                     )
                 }
