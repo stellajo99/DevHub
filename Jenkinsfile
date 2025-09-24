@@ -207,17 +207,23 @@ pipeline {
 
                         az container create \
                             --resource-group devhub-rg \
-                            --name devhub-container \
-                            --image devhubregistry.azurecr.io/devhub:${BUILD_NUMBER} \
+                            --name devhub-container-debug \
+                            --image devhubregistry.azurecr.io/devhub:28 \
                             --registry-login-server devhubregistry.azurecr.io \
-                            --registry-username $REGISTRY_USERNAME \
-                            --registry-password $REGISTRY_PASSWORD \
-                            --dns-name-label devhub-app-${BUILD_NUMBER} \
+                            --registry-username devhubregistry \
+                            --registry-password nwx6ES9Xc8zGtP6M3JRQJudb3NuEiYXLgru3/YxZ8l+ACRDxuZHJ \
+                            --dns-name-label devhub-app-debug \
                             --ports 3000 \
                             --cpu 1 \
                             --memory 1 \
                             --location eastus \
-                            --os-type Linux
+                            --os-type Linux \
+                            --restart-policy Never \
+                            --environment-variables \
+                                NODE_ENV=production \
+                                PORT=3000 \
+                                MONGODB_URI="mongodb://dummy:27017/devhub" \
+                                JWT_SECRET="debug-secret-key"
 
                         echo "Waiting for container to be ready..."
                         sleep 60
