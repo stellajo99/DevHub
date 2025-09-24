@@ -113,9 +113,15 @@ pipeline {
 
                 node backend/src/server.js > backend/test-server.log 2>&1 & echo \$! > backend/test-server.pid
 
-                echo "▶ Wait for health endpoint"
+                echo "▶ Wait for health endpoint and database connection"
                 for i in {1..40}; do
-                curl -sf http://127.0.0.1:5000/api/health && break || sleep 1
+                  if curl -sf http://127.0.0.1:5000/api/health | grep -q '"status":"OK"'; then
+                    echo "✅ Server and database are ready"
+                    break
+                  else
+                    echo "⏳ Waiting for server/database... (attempt $i/40)"
+                    sleep 2
+                  fi
                 done
 
                 echo "▶ Run Jest (unit + integration) with JUnit + coverage"
