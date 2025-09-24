@@ -79,58 +79,78 @@ pipeline {
     }
 
     stage('Test') {
-      environment {
-        BE_JUNIT     = 'backend/test-results.xml'
+    environment {
+        BE_JUNIT     = 'backend/junit.xml'
         BE_LCOV      = 'backend/coverage/lcov.info'
         BE_COBERTURA = 'backend/coverage/cobertura-coverage.xml'
-      }
-      steps {
-        script {
-          echo "🧪 === TEST STAGE ==="
-        }
-        // Back-end unit tests with coverage; never hard-fail the whole pipeline here
-        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-          dir('backend') {
-            sh '''#!/usr/bin/env bash
-              set -euo pipefail
-              echo "▶ Installing backend test deps"
-              npm ci
-              npm install --no-save jest-junit
+    }
+    steps {
+        script { echo "🧪 === TEST STAGE ===" }
 
-              echo "▶ Running Jest with JUnit + coverage"
-              JEST_JUNIT_OUTPUT="test-results.xml" \
-              npx jest tests --runInBand \
+        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+        sh '''#!/usr/bin/env bash
+            set -euo pipefail
+
+            echo "▶ Start MongoDB (docker)"
+            docker rm -f ci-mongo >/dev/null 2>&1 || true
+            docker run -d --name ci-mongo -p 27017:27017 mongo:6 > /dev/null
+
+            echo "▶ Install backend deps"
+            pushd backend >/dev/null
+            npm ci
+            npm i --no-save jest-junit
+            popd >/dev/null
+
+            echo "▶ Start backend server in background"
+            export JWT_SECRET="ci-secret"
+            export NODE_ENV="test"
+            export PORT=5000
+            export MONGODB_URI="mongodb://localhost:27017/devhub_ci"
+
+            node backend/src/server.js > backend/test-server.log 2>&1 & echo $! > backend/test-server.pid
+
+            echo "▶ Wait for health endpoint"
+            for i in {1..30}; do
+            curl -sf http://localhost:5000/api/health && break || sleep 1
+            done
+
+            echo "▶ Run Jest (unit+integration), JUnit + coverage"
+            pushd backend >/dev/null
+            JEST_JUNIT_OUTPUT="junit.xml" \
+            npx jest tests --runInBand \
                 --reporters=default --reporters=jest-junit \
                 --coverage || true
-
-              # Generate Cobertura if you have a transformer; otherwise skip silently
-              [ -f coverage/lcov.info ] || touch coverage/lcov.info
-            '''
-          }
+            popd >/dev/null
+        '''
         }
-      }
-      post {
+    }
+    post {
         always {
-          script {
+        script {
+            sh '''#!/usr/bin/env bash
+            set -e
+            if [ -f backend/test-server.pid ]; then kill $(cat backend/test-server.pid) || true; fi
+            docker rm -f ci-mongo >/dev/null 2>&1 || true
+            '''
             if (fileExists(env.BE_JUNIT)) {
-              junit allowEmptyResults: true, testResults: env.BE_JUNIT
+            junit allowEmptyResults: true, testResults: env.BE_JUNIT
             } else {
-              echo "JUnit not found at ${env.BE_JUNIT}"
+            echo "JUnit not found at ${env.BE_JUNIT}"
             }
-
             if (fileExists(env.BE_COBERTURA)) {
-              step([$class: 'CoberturaPublisher',
+            step([$class: 'CoberturaPublisher',
                 coberturaReportFile: env.BE_COBERTURA,
                 onlyStable: false, failNoReports: false,
                 autoUpdateHealth: false, autoUpdateStability: false])
             } else {
-              echo "Cobertura not found at ${env.BE_COBERTURA} (ok)"
+            echo "Cobertura not found at ${env.BE_COBERTURA} (ok)"
             }
-          }
-          archiveArtifacts artifacts: 'backend/coverage/**/*', allowEmptyArchive: true
         }
-      }
+        archiveArtifacts artifacts: 'backend/coverage/**/*', allowEmptyArchive: true
+        }
     }
+    }
+
 
     stage('Code Quality') {
       environment {
@@ -141,7 +161,7 @@ pipeline {
           echo "🧩 === SONARCLOUD ==="
         }
         dir('backend') {
-          sh '''#!/usr/bin/env bash
+          sh """#!/usr/bin/env bash
             set -euo pipefail
 
             echo "Installing SonarScanner (npx)"
@@ -156,7 +176,7 @@ pipeline {
               -Dsonar.host.url=https://sonarcloud.io \
               -Dsonar.token='${SONAR_TOKEN}' \
               -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info || echo "Sonar finished with issues"
-          '''
+          """
         }
       }
     }
