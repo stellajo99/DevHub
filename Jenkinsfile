@@ -1,7 +1,6 @@
 // Jenkinsfile
 pipeline {
     agent any
-    tools { nodejs 'Node18' }
 
     environment {
         NODE_VERSION = '18'
