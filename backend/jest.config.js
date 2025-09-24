@@ -9,7 +9,6 @@ module.exports = {
   testMatch: [
     '**/tests/**/*.test.js'
   ],
-  setupFilesAfterEnv: ['<rootDir>/tests/mongomemory.js'], 
   coverageThreshold: {
     global: {
       branches: 80,

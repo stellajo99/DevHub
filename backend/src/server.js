@@ -31,40 +31,12 @@ app.use('/api/auth', authRoutes);
 app.use('/api/posts', postRoutes);
 app.use('/api/comments', commentRoutes);
 
-app.get('/api/health', async (req, res) => {
-  try {
-    // Check database connection
-    const dbState = require('mongoose').connection.readyState;
-    const dbStatus = dbState === 1 ? 'connected' : dbState === 2 ? 'connecting' : 'disconnected';
-
-    if (dbState !== 1) {
-      return res.status(503).json({
-        status: 'ERROR',
-        message: 'Database not connected',
-        database: { status: dbStatus },
-        timestamp: new Date().toISOString(),
-        environment: process.env.NODE_ENV || 'development'
-      });
-    }
-
-    // Test database connectivity with a simple query
-    await require('mongoose').connection.db.admin().ping();
-
-    res.json({
-      status: 'OK',
-      database: { status: 'connected' },
-      timestamp: new Date().toISOString(),
-      environment: process.env.NODE_ENV || 'development'
-    });
-  } catch (error) {
-    res.status(503).json({
-      status: 'ERROR',
-      message: 'Database connection test failed',
-      error: error.message,
-      timestamp: new Date().toISOString(),
-      environment: process.env.NODE_ENV || 'development'
-    });
-  }
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development'
+  });
 });
 
 app.use(errorHandler);
