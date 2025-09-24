@@ -234,7 +234,7 @@ services:
       - "80:80"
       - "3000:3000"
     volumes:
-      - ./nginx.production.conf:/etc/nginx/nginx.conf:ro
+    #  - ./nginx.production.conf:/etc/nginx/nginx.conf:ro
       - ./logs:/var/log/nginx
       - frontend-build:/usr/share/nginx/html
     networks:
